@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: django-eve-industry-postgres
+    environment:
+      POSTGRES_DB: django_eve_industry
+      POSTGRES_USER: django_eve_industry
+      POSTGRES_PASSWORD: django_eve_industry
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U django_eve_industry -d django_eve_industry"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

@@ -21,14 +21,18 @@ Implemented:
 
 ## Local run
 
-1. Copy `.env.example` to `.env`.
-2. Fill Postgres variables when a database is available.
+1. Copy `.env.example` to `.env` for SQLite bootstrap, or `.env.postgres.example` to `.env` for local Postgres.
+2. For local Postgres, start it with:
+   - `docker compose -f docker-compose.postgres.yml up -d`
+3. Fill or adjust DB variables in `.env`.
    - optional: set `DJANGO_ADVISORY_LOCK_NAMESPACE`
-3. Run migrations:
+4. Run migrations:
    - `..\.venv\Scripts\python.exe manage.py migrate`
-4. Create admin user:
+5. Verify Postgres advisory locks when using Postgres:
+   - `..\.venv\Scripts\python.exe manage.py check_postgres_locks`
+6. Create admin user:
    - `..\.venv\Scripts\python.exe manage.py createsuperuser`
-5. Start server:
+7. Start server:
    - `..\.venv\Scripts\python.exe manage.py runserver`
 
 ## Delivery plan

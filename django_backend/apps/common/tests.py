@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from io import StringIO
 from unittest import TestCase
+from unittest.mock import MagicMock, patch
 
+from django.core.management import CommandError, call_command
+
+from apps.common.db import DatabaseConfigurationError, is_postgres, require_postgres
 from apps.common.locks import (
     AdvisoryLockError,
     AdvisoryLockKey,
@@ -96,3 +101,39 @@ class AdvisoryLockTests(TestCase):
 
         with self.assertRaises(AdvisoryLockError):
             try_advisory_lock(connection, AdvisoryLockKey(group_id=1, resource_id=2))
+
+
+class DatabaseHelperTests(TestCase):
+    @patch("apps.common.db.get_connection")
+    def test_is_postgres_true_for_postgres_vendor(self, get_connection_mock: MagicMock) -> None:
+        get_connection_mock.return_value.vendor = "postgresql"
+
+        self.assertTrue(is_postgres())
+
+    @patch("apps.common.db.get_connection")
+    def test_require_postgres_raises_for_non_postgres(self, get_connection_mock: MagicMock) -> None:
+        get_connection_mock.return_value.vendor = "sqlite"
+
+        with self.assertRaises(DatabaseConfigurationError):
+            require_postgres()
+
+
+class CheckPostgresLocksCommandTests(TestCase):
+    @patch("apps.common.management.commands.check_postgres_locks.advisory_lock")
+    @patch("apps.common.management.commands.check_postgres_locks.require_postgres")
+    def test_command_reports_success(self, require_postgres_mock: MagicMock, advisory_lock_mock: MagicMock) -> None:
+        require_postgres_mock.return_value = object()
+        advisory_lock_mock.return_value.__enter__.return_value = None
+        advisory_lock_mock.return_value.__exit__.return_value = False
+        stdout = StringIO()
+
+        call_command("check_postgres_locks", stdout=stdout)
+
+        self.assertIn("Advisory lock OK", stdout.getvalue())
+
+    @patch("apps.common.management.commands.check_postgres_locks.require_postgres")
+    def test_command_raises_on_configuration_error(self, require_postgres_mock: MagicMock) -> None:
+        require_postgres_mock.side_effect = DatabaseConfigurationError("PostgreSQL is required")
+
+        with self.assertRaisesRegex(CommandError, "PostgreSQL is required"):
+            call_command("check_postgres_locks")

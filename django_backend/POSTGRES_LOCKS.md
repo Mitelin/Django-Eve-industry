@@ -24,3 +24,16 @@ Examples:
 - Acquire with `advisory_lock(...)` or `try_advisory_lock(...)`.
 - Fail fast if the active DB connection is not PostgreSQL.
 - Keep lock scope as narrow as possible while still preventing duplicate work.
+
+## Local verification
+
+1. Start local Postgres:
+- `docker compose -f docker-compose.postgres.yml up -d`
+
+2. Copy `.env.postgres.example` to `.env` and adjust values if needed.
+
+3. Run migrations:
+- `..\.venv\Scripts\python.exe manage.py migrate`
+
+4. Verify lock support:
+- `..\.venv\Scripts\python.exe manage.py check_postgres_locks`
