@@ -11,6 +11,7 @@ Implemented:
 - Advisory lock helper baseline for Postgres worker coordination
 - EVE SSO token security service baseline with encrypted refresh-token storage
 - Sync coordinator foundation with `SyncRun` status/freshness handling
+- First real corporation ingest services for assets and jobs snapshots
 - Initial domain apps:
   - `apps.accounts`
   - `apps.eve_sso`
@@ -62,3 +63,4 @@ Supporting docs:
 Current service baselines:
 - `apps.eve_sso.services.EsiTokenService`
 - `apps.corp_sync.services.SyncCoordinator`
+- `apps.corp_sync.services.CorporationSyncService`
