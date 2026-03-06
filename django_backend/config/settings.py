@@ -71,6 +71,12 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 ADVISORY_LOCK_NAMESPACE = os.getenv("DJANGO_ADVISORY_LOCK_NAMESPACE", "django-eve-industry")
+EVE_API_BASE = os.getenv("EVE_API_BASE", "https://esi.evetech.net/latest")
+EVE_TOKEN_API = os.getenv("EVE_TOKEN_API", "https://login.eveonline.com/v2/oauth/token")
+EVE_CLIENT_ID = os.getenv("EVE_CLIENT_ID", "")
+EVE_CLIENT_SECRET = os.getenv("EVE_CLIENT_SECRET", "")
+EVE_CORPORATION_ID = int(os.getenv("EVE_CORPORATION_ID", "0") or "0")
+ESI_TOKEN_ENCRYPTION_KEY = os.getenv("ESI_TOKEN_ENCRYPTION_KEY", SECRET_KEY)
 
 if POSTGRES_NAME:
     DATABASES = {

@@ -9,6 +9,8 @@ Implemented:
 - DRF and Postgres driver dependency baseline
 - Environment-based settings with Postgres-ready configuration
 - Advisory lock helper baseline for Postgres worker coordination
+- EVE SSO token security service baseline with encrypted refresh-token storage
+- Sync coordinator foundation with `SyncRun` status/freshness handling
 - Initial domain apps:
   - `apps.accounts`
   - `apps.eve_sso`
@@ -26,6 +28,7 @@ Implemented:
    - `docker compose -f docker-compose.postgres.yml up -d`
 3. Fill or adjust DB variables in `.env`.
    - optional: set `DJANGO_ADVISORY_LOCK_NAMESPACE`
+   - set `EVE_CLIENT_ID`, `EVE_CLIENT_SECRET`, `EVE_CORPORATION_ID`, `ESI_TOKEN_ENCRYPTION_KEY` when testing token flows
 4. Run migrations:
    - `..\.venv\Scripts\python.exe manage.py migrate`
 5. Verify Postgres advisory locks when using Postgres:
@@ -55,3 +58,7 @@ Execution reference:
 
 Supporting docs:
 - `POSTGRES_LOCKS.md`
+
+Current service baselines:
+- `apps.eve_sso.services.EsiTokenService`
+- `apps.corp_sync.services.SyncCoordinator`
