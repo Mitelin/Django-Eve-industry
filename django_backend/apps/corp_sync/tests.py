@@ -6,7 +6,13 @@ from unittest.mock import MagicMock, patch
 from django.test import TestCase
 from django.utils import timezone
 
-from apps.corp_sync.models import CorpAssetSnapshot, CorpJobSnapshot, SyncRun
+from apps.corp_sync.models import (
+    CorpAssetSnapshot,
+    CorpJobSnapshot,
+    SyncRun,
+    WalletJournalSnapshot,
+    WalletTransactionSnapshot,
+)
 from apps.corp_sync.services import CorporationSyncService, SyncCoordinator, SyncExecutionError
 
 
@@ -168,3 +174,63 @@ class CorporationSyncServiceTests(TestCase):
         sync_run = SyncRun.objects.get(kind="jobs", corporation_id=123)
         self.assertEqual(sync_run.status, "failed")
         self.assertEqual(sync_run.error_text, "esi failure")
+
+    def test_sync_wallet_journal_stores_snapshots(self) -> None:
+        client = MagicMock()
+        client.get.return_value = _FakeResponse(
+            [
+                {
+                    "id": 501,
+                    "amount": 12.34,
+                    "balance": 55.0,
+                    "context_id": 1001,
+                    "context_id_type": "market_transaction_id",
+                    "date": "2026-03-06T10:00:00Z",
+                    "description": "Sale",
+                    "first_party_id": 9001,
+                    "reason": "",
+                    "ref_type": "market_transaction",
+                    "second_party_id": 9002,
+                    "tax": 0.5,
+                    "tax_receiver_id": 9003,
+                }
+            ],
+            headers={"x-pages": "1"},
+        )
+        service = CorporationSyncService(esi_client=client)
+
+        sync_run = service.sync_wallet_journal(123, 7, "token")
+
+        self.assertEqual(sync_run.status, "ok")
+        self.assertEqual(sync_run.rows_written, 1)
+        snapshot = WalletJournalSnapshot.objects.get(sync_run=sync_run)
+        self.assertEqual(snapshot.entry_id, 501)
+        self.assertEqual(snapshot.ref_type, "market_transaction")
+
+    def test_sync_wallet_transactions_stores_snapshots(self) -> None:
+        client = MagicMock()
+        client.get.return_value = _FakeResponse(
+            [
+                {
+                    "transaction_id": 601,
+                    "client_id": 8001,
+                    "date": "2026-03-06T10:00:00Z",
+                    "is_buy": True,
+                    "journal_ref_id": 501,
+                    "location_id": 7001,
+                    "quantity": 4,
+                    "type_id": 34,
+                    "unit_price": 4.2,
+                }
+            ],
+            headers={"x-pages": "1"},
+        )
+        service = CorporationSyncService(esi_client=client)
+
+        sync_run = service.sync_wallet_transactions(123, 7, "token")
+
+        self.assertEqual(sync_run.status, "ok")
+        self.assertEqual(sync_run.rows_written, 1)
+        snapshot = WalletTransactionSnapshot.objects.get(sync_run=sync_run)
+        self.assertEqual(snapshot.transaction_id, 601)
+        self.assertTrue(snapshot.is_buy)

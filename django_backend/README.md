@@ -11,7 +11,7 @@ Implemented:
 - Advisory lock helper baseline for Postgres worker coordination
 - EVE SSO token security service baseline with encrypted refresh-token storage
 - Sync coordinator foundation with `SyncRun` status/freshness handling
-- First real corporation ingest services for assets and jobs snapshots
+- First real corporation ingest services for assets, jobs, wallet journal, and wallet transactions snapshots
 - Initial domain apps:
   - `apps.accounts`
   - `apps.eve_sso`
