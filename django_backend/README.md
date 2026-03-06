@@ -1,0 +1,53 @@
+# Django Backend Bootstrap
+
+## Current status
+
+This folder contains the initial Django rewrite baseline for the corporation industry backend.
+
+Implemented:
+- Django project skeleton (`config`, `manage.py`)
+- DRF and Postgres driver dependency baseline
+- Environment-based settings with Postgres-ready configuration
+- Advisory lock helper baseline for Postgres worker coordination
+- Initial domain apps:
+  - `apps.accounts`
+  - `apps.eve_sso`
+  - `apps.corp_sync`
+  - `apps.industry_planner`
+  - `apps.workforce`
+- First-pass schema models and migrations
+- Admin registrations for the initial models
+- `/health/` route for quick liveness checks
+
+## Local run
+
+1. Copy `.env.example` to `.env`.
+2. Fill Postgres variables when a database is available.
+   - optional: set `DJANGO_ADVISORY_LOCK_NAMESPACE`
+3. Run migrations:
+   - `..\.venv\Scripts\python.exe manage.py migrate`
+4. Create admin user:
+   - `..\.venv\Scripts\python.exe manage.py createsuperuser`
+5. Start server:
+   - `..\.venv\Scripts\python.exe manage.py runserver`
+
+## Delivery plan
+
+1. Keep this project as the new Django system of record candidate.
+2. Implement Postgres-first runtime settings for real local/staging DB.
+3. Add token encryption and sync worker foundation.
+4. Port planner parity logic behind frozen contract tests.
+5. Build `START_JOB` work-item lifecycle and verifier.
+6. Run Django in shadow mode before any assisted cutover.
+
+Execution reference:
+- See `kontext/SKELETON_TO_FULL_PROJECT_EXECUTION_PLAN.md` for the authoritative end-to-end implementation order.
+
+## Rules for this rewrite
+
+- Parity-first before behavior changes.
+- No hard cut of legacy text errors until critical scripts are updated and validated.
+- Worker overlap prevention uses Postgres advisory locks.
+
+Supporting docs:
+- `POSTGRES_LOCKS.md`
