@@ -1,0 +1,46 @@
+{% extends "workforce/base.html" %}
+
+{% block title %}Operations Console{% endblock %}
+{% block nav_home %}is-active{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="eyebrow">Pilot Surface</div>
+    <h2>Two operational screens, one backend slice.</h2>
+    <p>
+        The director screen tracks project bottlenecks, freshness, and worker load. The worker screen handles claim,
+        active task context, temp-done, and release using the same verified workforce routes already covered by tests.
+    </p>
+    <div class="hero-grid">
+        <div class="stat">
+            <span>Director Flow</span>
+            <strong>Projects + bottlenecks</strong>
+        </div>
+        <div class="stat">
+            <span>Worker Flow</span>
+            <strong>Claim to verify</strong>
+        </div>
+        <div class="stat">
+            <span>Data Safety</span>
+            <strong>Freshness warnings</strong>
+        </div>
+    </div>
+</section>
+
+<section class="grid two">
+    <article class="panel">
+        <h3>Director Flight Deck</h3>
+        <p>Use live queue counts, stale-state signals, project drilldown, active worker assignments, and failure hotspots.</p>
+        <div class="actions">
+            <a class="button-link" href="/director/">Open Director Screen</a>
+        </div>
+    </article>
+    <article class="panel">
+        <h3>Worker Command</h3>
+        <p>Load a worker by user ID, claim next work, inspect instructions and materials, then release or mark temp-done.</p>
+        <div class="actions">
+            <a class="button-link" href="/worker/">Open Worker Screen</a>
+        </div>
+    </article>
+</section>
+{% endblock %}

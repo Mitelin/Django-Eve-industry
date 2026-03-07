@@ -1,0 +1,89 @@
+{
+  "jobs": [
+    {
+      "blueprint": "Final Blueprint",
+      "blueprintTypeId": 100,
+      "isAdvanced": true,
+      "level": 1,
+      "materials": [
+        {
+          "base_quantity": 10,
+          "quantity": 30,
+          "type": "Tritanium"
+        },
+        {
+          "base_quantity": 2,
+          "quantity": 6,
+          "type": "Intermediate Product"
+        }
+      ],
+      "maxProductionLimit": 300,
+      "probability": null,
+      "product": "Final Product",
+      "productTypeID": 200,
+      "quantity": 1,
+      "runs": 3,
+      "time": 60,
+      "type": "Manufacturing"
+    },
+    {
+      "blueprint": "Intermediate Blueprint",
+      "blueprintTypeId": 300,
+      "isAdvanced": false,
+      "level": 2,
+      "materials": [
+        {
+          "base_quantity": 5,
+          "quantity": 30,
+          "type": "Pyerite"
+        }
+      ],
+      "maxProductionLimit": 300,
+      "probability": null,
+      "product": "Intermediate Product",
+      "productTypeID": 201,
+      "quantity": 1,
+      "runs": 6,
+      "time": 30,
+      "type": "Manufacturing"
+    }
+  ],
+  "materials": [
+    {
+      "activityId": 1,
+      "isInput": true,
+      "level": 1,
+      "material": "Tritanium",
+      "materialTypeID": 500,
+      "quantity": 30,
+      "quantityAdvancedManufacture": 30,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 0,
+      "quantityBasicReaction": 0
+    },
+    {
+      "activityId": 1,
+      "isInput": false,
+      "level": 1,
+      "material": "Intermediate Product",
+      "materialTypeID": 201,
+      "quantity": 6,
+      "quantityAdvancedManufacture": 6,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 0,
+      "quantityBasicReaction": 0
+    },
+    {
+      "activityId": 1,
+      "isInput": true,
+      "level": 2,
+      "material": "Pyerite",
+      "materialTypeID": 501,
+      "quantity": 30,
+      "quantityAdvancedManufacture": 0,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 30,
+      "quantityBasicReaction": 0
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "jobs": [
+    {
+      "blueprint": "Advanced Hull Blueprint",
+      "blueprintTypeId": 900,
+      "isAdvanced": true,
+      "level": 1,
+      "materials": [
+        {
+          "base_quantity": 1,
+          "quantity": 1,
+          "type": "Base Hull"
+        },
+        {
+          "base_quantity": 8,
+          "quantity": 8,
+          "type": "Capital Plate"
+        },
+        {
+          "base_quantity": 1,
+          "quantity": 1,
+          "type": "Advanced Hull Blueprint"
+        }
+      ],
+      "maxProductionLimit": 100,
+      "probability": null,
+      "product": "Advanced Hull",
+      "productTypeID": 901,
+      "quantity": 1,
+      "runs": 1,
+      "time": 89,
+      "type": "Manufacturing"
+    }
+  ],
+  "materials": [
+    {
+      "activityId": 1,
+      "isInput": false,
+      "level": 1,
+      "material": "Base Hull",
+      "materialTypeID": 801,
+      "quantity": 1,
+      "quantityAdvancedManufacture": 1,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 0,
+      "quantityBasicReaction": 0
+    },
+    {
+      "activityId": 1,
+      "isInput": true,
+      "level": 1,
+      "material": "Capital Plate",
+      "materialTypeID": 804,
+      "quantity": 8,
+      "quantityAdvancedManufacture": 8,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 0,
+      "quantityBasicReaction": 0
+    },
+    {
+      "activityId": 1,
+      "isInput": true,
+      "level": 1,
+      "material": "Advanced Hull Blueprint",
+      "materialTypeID": 900,
+      "quantity": 1,
+      "quantityAdvancedManufacture": 1,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 0,
+      "quantityBasicReaction": 0
+    }
+  ]
+}

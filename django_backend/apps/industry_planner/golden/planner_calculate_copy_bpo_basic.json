@@ -1,0 +1,88 @@
+{
+  "jobs": [
+    {
+      "blueprint": "Copy Blueprint",
+      "blueprintTypeId": 400,
+      "isAdvanced": false,
+      "level": 1,
+      "materials": [
+        {
+          "base_quantity": 4,
+          "quantity": 12,
+          "type": "Tritanium"
+        },
+        {
+          "quantity": 2,
+          "type": "Copy Blueprint"
+        }
+      ],
+      "maxProductionLimit": 3,
+      "probability": null,
+      "product": "Copy Product",
+      "productTypeID": 401,
+      "quantity": 2,
+      "runs": 3,
+      "time": 50,
+      "type": "Manufacturing"
+    },
+    {
+      "blueprint": "Copy Blueprint",
+      "blueprintTypeId": 400,
+      "isAdvanced": false,
+      "level": 10,
+      "materials": [
+        {
+          "base_quantity": 2,
+          "quantity": 6,
+          "type": "Copy Material"
+        }
+      ],
+      "maxProductionLimit": 3,
+      "probability": null,
+      "product": "Copy Blueprint",
+      "productTypeID": 400,
+      "quantity": 2,
+      "runs": 2,
+      "time": 80,
+      "type": "Copying"
+    }
+  ],
+  "materials": [
+    {
+      "activityId": 1,
+      "isInput": true,
+      "level": 1,
+      "material": "Tritanium",
+      "materialTypeID": 402,
+      "quantity": 12,
+      "quantityAdvancedManufacture": 0,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 12,
+      "quantityBasicReaction": 0
+    },
+    {
+      "activityId": 5,
+      "isInput": true,
+      "level": 1,
+      "material": "Copy Material",
+      "materialTypeID": 403,
+      "quantity": 6,
+      "quantityAdvancedManufacture": 0,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 0,
+      "quantityBasicReaction": 0
+    },
+    {
+      "activityId": 5,
+      "isInput": false,
+      "level": 10,
+      "material": "Copy Blueprint",
+      "materialTypeID": 400,
+      "quantity": 1,
+      "quantityAdvancedManufacture": 0,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 0,
+      "quantityBasicReaction": 0
+    }
+  ]
+}

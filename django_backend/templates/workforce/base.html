@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Operations Console{% endblock %}</title>
+    <style>
+        :root {
+            --bg: #09111f;
+            --bg-accent: #13243a;
+            --panel: rgba(9, 17, 31, 0.82);
+            --panel-strong: rgba(15, 28, 48, 0.94);
+            --line: rgba(126, 175, 220, 0.22);
+            --text: #eaf2ff;
+            --muted: #96a9c4;
+            --hot: #ff8c61;
+            --cool: #65d3c7;
+            --warn: #ffcf66;
+            --bad: #ff7f96;
+            --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+            --radius: 24px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Aptos", "Trebuchet MS", "Segoe UI", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(255, 140, 97, 0.22), transparent 32%),
+                radial-gradient(circle at top right, rgba(101, 211, 199, 0.18), transparent 28%),
+                linear-gradient(135deg, #07101d 0%, #0f1b2f 50%, #0d1829 100%);
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 48px 48px;
+            mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 85%);
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .shell {
+            position: relative;
+            width: min(1400px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 24px 0 48px;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+
+        .brand {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .eyebrow {
+            font-size: 12px;
+            letter-spacing: 0.24em;
+            text-transform: uppercase;
+            color: var(--cool);
+        }
+
+        .brand h1,
+        .hero h2,
+        .panel h3,
+        .panel h4,
+        .stat strong {
+            font-family: "Bahnschrift", "Aptos Display", "Segoe UI", sans-serif;
+            letter-spacing: 0.01em;
+        }
+
+        .brand h1 {
+            margin: 0;
+            font-size: clamp(28px, 4vw, 44px);
+        }
+
+        .brand p,
+        .muted,
+        .panel p,
+        .panel li,
+        .panel label,
+        .panel input,
+        .panel button,
+        .panel select,
+        .panel code,
+        .table {
+            color: var(--muted);
+        }
+
+        .nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .chip,
+        button,
+        .button-link {
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text);
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+        }
+
+        .chip:hover,
+        button:hover,
+        .button-link:hover {
+            transform: translateY(-1px);
+            border-color: rgba(255, 255, 255, 0.34);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .chip.is-active {
+            background: linear-gradient(135deg, rgba(255, 140, 97, 0.25), rgba(101, 211, 199, 0.16));
+            border-color: rgba(255, 255, 255, 0.25);
+        }
+
+        .hero,
+        .panel {
+            background: linear-gradient(180deg, rgba(16, 29, 50, 0.94), rgba(7, 15, 28, 0.9));
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .hero {
+            position: relative;
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            inset: auto -10% -35% auto;
+            width: 340px;
+            height: 340px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255, 140, 97, 0.18), transparent 65%);
+        }
+
+        .hero h2 {
+            margin: 0 0 10px;
+            font-size: clamp(26px, 3vw, 40px);
+        }
+
+        .hero p {
+            margin: 0;
+            max-width: 70ch;
+            line-height: 1.55;
+        }
+
+        .hero-grid,
+        .grid,
+        .stats,
+        .stack {
+            display: grid;
+            gap: 18px;
+        }
+
+        .hero-grid {
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            margin-top: 22px;
+        }
+
+        .grid.two {
+            grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+        }
+
+        .stats {
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        }
+
+        .panel {
+            padding: 22px;
+            animation: rise 320ms ease;
+        }
+
+        @keyframes rise {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .panel h3,
+        .panel h4 {
+            margin: 0 0 14px;
+            color: var(--text);
+        }
+
+        .panel h4 {
+            font-size: 16px;
+        }
+
+        .panel p {
+            line-height: 1.55;
+        }
+
+        .stat {
+            padding: 16px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .stat span {
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        .stat strong {
+            font-size: clamp(22px, 3vw, 34px);
+            color: var(--text);
+        }
+
+        .list,
+        .table,
+        .key-values {
+            display: grid;
+            gap: 12px;
+        }
+
+        .list-item,
+        .table-row {
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.03);
+            padding: 14px 16px;
+        }
+
+        .list-item.is-clickable {
+            cursor: pointer;
+            transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+        }
+
+        .list-item.is-clickable:hover,
+        .list-item.is-selected {
+            transform: translateY(-1px);
+            border-color: rgba(101, 211, 199, 0.45);
+            background: rgba(101, 211, 199, 0.08);
+        }
+
+        .title-row,
+        .meta-row,
+        .actions,
+        .field-row,
+        .pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .title-row {
+            justify-content: space-between;
+        }
+
+        .meta-row {
+            font-size: 13px;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text);
+            font-size: 12px;
+        }
+
+        .pill.warn { background: rgba(255, 207, 102, 0.14); }
+        .pill.bad { background: rgba(255, 127, 150, 0.14); }
+        .pill.good { background: rgba(101, 211, 199, 0.14); }
+
+        .field-row {
+            margin-bottom: 14px;
+        }
+
+        input {
+            min-width: 0;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            background: rgba(0, 0, 0, 0.18);
+            color: var(--text);
+            padding: 12px 14px;
+        }
+
+        .banner {
+            padding: 14px 16px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 207, 102, 0.3);
+            background: rgba(255, 207, 102, 0.12);
+            color: #ffe8a7;
+        }
+
+        .empty {
+            padding: 20px;
+            border: 1px dashed rgba(255, 255, 255, 0.14);
+            border-radius: 16px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .mono {
+            font-family: "Cascadia Code", "Consolas", monospace;
+            color: #d4e3ff;
+        }
+
+        @media (max-width: 980px) {
+            .grid.two {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <div class="shell">
+        <div class="topbar">
+            <div class="brand">
+                <span class="eyebrow">Django EVE Industry</span>
+                <h1>Operations Console</h1>
+                <p class="muted">Phase 7 operational UI over verified planner and workforce APIs.</p>
+            </div>
+            <nav class="nav">
+                <a href="/" class="chip {% block nav_home %}{% endblock %}">Home</a>
+                <a href="/director/" class="chip {% block nav_director %}{% endblock %}">Director</a>
+                <a href="/worker/" class="chip {% block nav_worker %}{% endblock %}">Worker</a>
+            </nav>
+        </div>
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

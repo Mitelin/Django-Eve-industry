@@ -1,0 +1,39 @@
+{
+  "jobs": [
+    {
+      "blueprint": "Reaction Formula",
+      "blueprintTypeId": 500,
+      "isAdvanced": false,
+      "level": 1,
+      "materials": [
+        {
+          "base_quantity": 10,
+          "quantity": 20,
+          "type": "Reaction Input"
+        }
+      ],
+      "maxProductionLimit": 300,
+      "probability": null,
+      "product": "Reaction Product",
+      "productTypeID": 501,
+      "quantity": 2,
+      "runs": 2,
+      "time": 44,
+      "type": "Reaction"
+    }
+  ],
+  "materials": [
+    {
+      "activityId": 11,
+      "isInput": true,
+      "level": 1,
+      "material": "Reaction Input",
+      "materialTypeID": 502,
+      "quantity": 20,
+      "quantityAdvancedManufacture": 0,
+      "quantityAdvancedReaction": 0,
+      "quantityBasicManufacture": 0,
+      "quantityBasicReaction": 20
+    }
+  ]
+}

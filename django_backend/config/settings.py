@@ -77,6 +77,28 @@ EVE_CLIENT_ID = os.getenv("EVE_CLIENT_ID", "")
 EVE_CLIENT_SECRET = os.getenv("EVE_CLIENT_SECRET", "")
 EVE_CORPORATION_ID = int(os.getenv("EVE_CORPORATION_ID", "0") or "0")
 ESI_TOKEN_ENCRYPTION_KEY = os.getenv("ESI_TOKEN_ENCRYPTION_KEY", SECRET_KEY)
+CUTOVER_MODE = os.getenv("CUTOVER_MODE", "shadow").strip().lower() or "shadow"
+CUTOVER_READ_ONLY_ASSIGNMENT = os.getenv("CUTOVER_READ_ONLY_ASSIGNMENT", "0") == "1"
+CUTOVER_COMPATIBILITY_MODE = os.getenv("CUTOVER_COMPATIBILITY_MODE", "1") == "1"
+CUTOVER_PILOT_USER_IDS = [
+    int(value.strip())
+    for value in os.getenv("CUTOVER_PILOT_USER_IDS", "").split(",")
+    if value.strip()
+]
+CUTOVER_LEAD = os.getenv("CUTOVER_LEAD", "")
+CUTOVER_INCIDENT_COMMANDER = os.getenv("CUTOVER_INCIDENT_COMMANDER", "")
+CUTOVER_BACKEND_OWNER = os.getenv("CUTOVER_BACKEND_OWNER", "")
+CUTOVER_DATA_OWNER = os.getenv("CUTOVER_DATA_OWNER", "")
+CUTOVER_DIRECTOR_REPRESENTATIVE = os.getenv("CUTOVER_DIRECTOR_REPRESENTATIVE", "")
+CUTOVER_ROLLBACK_APPROVER = os.getenv("CUTOVER_ROLLBACK_APPROVER", "")
+CUTOVER_REQUIRED_SCRIPT_SIGNOFFS = [
+    value.strip()
+    for value in os.getenv(
+        "CUTOVER_REQUIRED_SCRIPT_SIGNOFFS",
+        "Blueprints.gs,Corporation.gs,Calculator.gs,Sidebar.gs",
+    ).split(",")
+    if value.strip()
+]
 
 if POSTGRES_NAME:
     DATABASES = {

@@ -1,0 +1,1747 @@
+{% extends "workforce/base.html" %}
+
+{% block title %}Director Flight Deck{% endblock %}
+{% block nav_director %}is-active{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="eyebrow">Director Flight Deck</div>
+    <h2>See pressure before it becomes blockage.</h2>
+    <p>
+        This screen blends aggregate queue posture with project drilldown. It is intended for pilot operations where the
+        director needs to inspect stale sync risk, active workers, temp-done aging, and failed work without going back to Sheets.
+    </p>
+    <div class="actions" style="margin-top: 22px;">
+        <button type="button" id="refresh-dashboard">Refresh Dashboard</button>
+        <button type="button" id="bootstrap-governance">Bootstrap Governance</button>
+        <button type="button" id="persist-evidence">Persist Evidence</button>
+        <button type="button" id="sync-missing-role-owners">Sync Missing Role Owners</button>
+        <button type="button" id="sync-missing-script-signoffs">Sync Missing Script Sign-Offs</button>
+        <span class="muted" id="persist-evidence-status">No new evidence persisted</span>
+    </div>
+</section>
+
+<section class="panel" id="shadow-summary-panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Shadow Summary</h3>
+        <span class="muted" id="shadow-summary-label">Loading...</span>
+    </div>
+    <div class="stats" id="shadow-stats"></div>
+    <div class="grid two" style="margin-top: 18px;">
+        <section>
+            <h4>Incidents</h4>
+            <div class="list" id="shadow-incidents"></div>
+        </section>
+        <section>
+            <h4>Sync Posture</h4>
+            <div class="list" id="shadow-sync"></div>
+        </section>
+    </div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Cutover Readiness</h3>
+        <span class="muted" id="cutover-mode-label">Loading...</span>
+    </div>
+    <div class="stats" id="cutover-stats"></div>
+    <div class="grid two" style="margin-top: 18px;">
+        <section>
+            <h4>Checklist</h4>
+            <div class="list" id="cutover-checklist"></div>
+        </section>
+        <section>
+            <h4>Blockers</h4>
+            <div class="list" id="cutover-blockers"></div>
+        </section>
+    </div>
+    <section style="margin-top: 18px;">
+        <h4>Critical Script Sign-Offs</h4>
+        <div class="list" id="cutover-script-signoffs"></div>
+    </section>
+    <section style="margin-top: 18px;">
+        <h4>Role Ownership</h4>
+        <div class="list" id="cutover-role-assignments"></div>
+    </section>
+    <section style="margin-top: 18px;">
+        <h4>Recent Sign-Off Activity</h4>
+        <div class="list" id="cutover-signoff-events"></div>
+    </section>
+    <section style="margin-top: 18px;">
+        <h4>Recent Role Activity</h4>
+        <div class="list" id="cutover-role-events"></div>
+    </section>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Pilot Readiness</h3>
+        <span class="muted" id="cutover-pilot-label">Loading...</span>
+    </div>
+    <div class="stats" id="cutover-pilot-stats"></div>
+    <div class="grid two" style="margin-top: 18px;">
+        <section>
+            <h4>Checklist</h4>
+            <div class="list" id="cutover-pilot-checklist"></div>
+        </section>
+        <section>
+            <h4>Activity Summary</h4>
+            <div class="list" id="cutover-pilot-activity"></div>
+        </section>
+    </div>
+    <div class="grid two" style="margin-top: 18px;">
+        <section>
+            <h4>Pilot Start Blockers</h4>
+            <div class="list" id="cutover-pilot-start-blockers"></div>
+        </section>
+        <section>
+            <h4>Pilot Expansion Blockers</h4>
+            <div class="list" id="cutover-pilot-expansion-blockers"></div>
+        </section>
+    </div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Pilot Snapshot History</h3>
+        <span class="muted" id="cutover-pilot-history-label">Loading...</span>
+    </div>
+    <div class="list" id="cutover-pilot-history"></div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Pilot Trend</h3>
+        <span class="muted" id="cutover-pilot-trend-label">Loading...</span>
+    </div>
+    <div class="list" id="cutover-pilot-trend"></div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Observation Window</h3>
+        <span class="muted" id="cutover-history-label">Loading...</span>
+    </div>
+    <div class="list" id="cutover-history"></div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Readiness Trend</h3>
+        <span class="muted" id="cutover-trend-label">Loading...</span>
+    </div>
+    <div class="list" id="cutover-trend"></div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Cutover Preflight</h3>
+        <span class="muted" id="cutover-preflight-label">Loading...</span>
+    </div>
+    <div class="stats" id="cutover-preflight-stats"></div>
+    <div class="grid two" style="margin-top: 18px;">
+        <section>
+            <h4>Snapshot Delta</h4>
+            <div class="list" id="cutover-preflight-delta"></div>
+        </section>
+        <section>
+            <h4>Recommended Actions</h4>
+            <div class="list" id="cutover-preflight-actions"></div>
+        </section>
+    </div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Preflight Snapshot History</h3>
+        <span class="muted" id="cutover-preflight-history-label">Loading...</span>
+    </div>
+    <div class="list" id="cutover-preflight-history"></div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Preflight Change Since Last Stored Snapshot</h3>
+        <span class="muted" id="cutover-preflight-change-label">Loading...</span>
+    </div>
+    <div class="grid two">
+        <section>
+            <h4>State Changes</h4>
+            <div class="list" id="cutover-preflight-change-summary"></div>
+        </section>
+        <section>
+            <h4>Blockers And Actions</h4>
+            <div class="list" id="cutover-preflight-change-details"></div>
+        </section>
+    </div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Action Guidance</h3>
+        <span class="muted" id="cutover-guidance-label">Ready</span>
+    </div>
+    <div class="list" id="cutover-guidance-body">
+        <div class="empty">Select a manual preflight action to see the operator checklist here.</div>
+    </div>
+</section>
+
+<section class="grid two" style="margin-bottom: 18px;">
+    <article class="panel">
+        <div class="title-row">
+            <h3>Update Script Sign-Off</h3>
+            <span class="muted" id="cutover-script-action-status">Ready</span>
+        </div>
+        <div class="stack">
+            <div class="field-row">
+                <label for="script-signoff-name">Script</label>
+                <select id="script-signoff-name"></select>
+            </div>
+            <div class="field-row">
+                <label for="script-signoff-status">Status</label>
+                <select id="script-signoff-status">
+                    <option value="pending">pending</option>
+                    <option value="validated">validated</option>
+                    <option value="blocked">blocked</option>
+                </select>
+            </div>
+            <div class="field-row">
+                <label for="script-signoff-by">Changed By</label>
+                <input id="script-signoff-by" type="text" placeholder="director" />
+            </div>
+            <div class="field-row">
+                <label for="script-signoff-notes">Notes</label>
+                <input id="script-signoff-notes" type="text" placeholder="Parity result or blocker detail" />
+            </div>
+            <div class="actions">
+                <button type="button" id="submit-script-signoff">Save Sign-Off</button>
+            </div>
+        </div>
+    </article>
+
+    <article class="panel">
+        <div class="title-row">
+            <h3>Assign Cutover Role</h3>
+            <span class="muted" id="cutover-role-action-status">Ready</span>
+        </div>
+        <div class="stack">
+            <div class="field-row">
+                <label for="cutover-role-name">Role</label>
+                <select id="cutover-role-name"></select>
+            </div>
+            <div class="field-row">
+                <label for="cutover-role-owner">Assigned To</label>
+                <input id="cutover-role-owner" type="text" placeholder="Lead operator" />
+            </div>
+            <div class="field-row">
+                <label for="cutover-role-by">Changed By</label>
+                <input id="cutover-role-by" type="text" placeholder="director" />
+            </div>
+            <div class="field-row">
+                <label for="cutover-role-notes">Notes</label>
+                <input id="cutover-role-notes" type="text" placeholder="Coverage window or escalation detail" />
+            </div>
+            <div class="actions">
+                <button type="button" id="submit-role-owner">Save Role Owner</button>
+            </div>
+        </div>
+    </article>
+</section>
+
+<section class="stats" id="dashboard-stats"></section>
+
+<section class="grid two" style="margin-top: 18px;">
+    <article class="panel" id="project-list-panel">
+        <div class="title-row">
+            <h3>Projects</h3>
+            <span class="muted" id="project-count-label">Loading...</span>
+        </div>
+        <div class="list" id="project-list"></div>
+    </article>
+
+    <article class="panel" id="project-detail-panel">
+        <div class="title-row">
+            <h3 id="detail-title">Project detail</h3>
+            <span class="pill warn" id="detail-stale-pill" hidden>Stale jobs data</span>
+        </div>
+        <div id="project-detail" class="stack">
+            <div class="empty">Select a project to inspect targets, bottlenecks, active workers, and event history.</div>
+        </div>
+    </article>
+</section>
+
+<script>
+const state = {
+    dashboard: null,
+    shadow: null,
+    cutover: null,
+    pilotReadiness: null,
+    selectedProjectId: null,
+    projectDetail: null,
+    highRiskOnly: false,
+    recentEventSourceFilter: 'all',
+};
+
+function getCookie(name) {
+    const cookieValue = document.cookie
+        .split(';')
+        .map((item) => item.trim())
+        .find((item) => item.startsWith(`${name}=`));
+    if (!cookieValue) {
+        return "";
+    }
+    return decodeURIComponent(cookieValue.slice(name.length + 1));
+}
+
+async function postJson(url, body) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+        throw new Error(payload.error || `Request failed with status ${response.status}`);
+    }
+    return payload;
+}
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function getRecommendedActionLabel(nextAction) {
+    if (nextAction === 'retry_verify') {
+        return 'Retry Verify';
+    }
+    if (nextAction === 'requeue') {
+        return 'Requeue';
+    }
+    if (nextAction === 'release_or_monitor') {
+        return 'Release';
+    }
+    return '';
+}
+
+function getFocusActionLabel(nextAction) {
+    if (nextAction === 'manual_review') {
+        return 'Open Guidance: Manual Review';
+    }
+    if (nextAction === 'wait_for_verify') {
+        return 'Open Guidance: Wait For Verify';
+    }
+    if (nextAction === 'monitor') {
+        return 'Open Guidance: Monitor';
+    }
+    return '';
+}
+
+function canRunRecommendedAction(nextAction) {
+    return ['retry_verify', 'requeue', 'release_or_monitor'].includes(nextAction);
+}
+
+function canFocusRecommendedAction(nextAction) {
+    return ['manual_review', 'wait_for_verify', 'monitor'].includes(nextAction);
+}
+
+function findWorkItemInDetail(workItemId) {
+    const groups = state.projectDetail?.bottlenecks || {};
+    for (const groupName of ['manualAttention', 'failed', 'tempDone', 'assigned']) {
+        const found = (groups[groupName] || []).find((item) => Number(item.id) === Number(workItemId));
+        if (found) {
+            return found;
+        }
+    }
+    return null;
+}
+
+function renderWorkItemGuidance({ title, label, steps, tone }) {
+    document.getElementById('cutover-guidance-label').textContent = 'Work item recommendation';
+    document.getElementById('cutover-guidance-body').innerHTML = `
+        <div class="list-item">
+            <div class="title-row">
+                <strong>${escapeHtml(title)}</strong>
+                <span class="pill ${escapeHtml(tone || 'warn')}">${escapeHtml(tone === 'bad' ? 'attention' : 'guidance')}</span>
+            </div>
+            <div class="meta-row">
+                <span>${escapeHtml(label || '')}</span>
+            </div>
+        </div>
+        ${steps.length ? steps.map((step, index) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>Step ${escapeHtml(index + 1)}</strong>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(step)}</span>
+                </div>
+            </div>
+        `).join('') : '<div class="empty">No guidance available.</div>'}
+    `;
+    document.getElementById('cutover-guidance-body').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function runRecommendedWorkItemAction(workItemId, nextAction) {
+    if (nextAction === 'retry_verify') {
+        await directorVerifyWorkItem(workItemId, 'recommended_action');
+        return;
+    }
+    if (nextAction === 'requeue') {
+        await directorRequeueWorkItem(workItemId, 'recommended_action');
+        return;
+    }
+    if (nextAction === 'release_or_monitor') {
+        await directorReleaseWorkItem(workItemId, 'recommended_action');
+    }
+}
+
+function focusRecommendedWorkItemAction(workItemId, nextAction) {
+    const workItem = findWorkItemInDetail(workItemId);
+    const label = workItem
+        ? `Work item ${workItem.id} (${workItem.risk?.label || workItem.status})`
+        : `Work item ${workItemId}`;
+
+    if (nextAction === 'wait_for_verify') {
+        renderWorkItemGuidance({
+            title: 'Wait For Verify',
+            label,
+            tone: 'warn',
+            steps: [
+                workItem?.risk?.reason ? `Confirm the queued evidence state: ${workItem.risk.reason}.` : 'Confirm the item is still awaiting verification evidence.',
+                'If jobs sync is fresh and evidence should now exist, use Run Verify Batch or Retry Verify.',
+                'If verification continues to miss, promote the item into explicit cleanup by retrying or requeueing after review.',
+            ],
+        });
+        document.getElementById('project-detail-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+    }
+
+    if (nextAction === 'manual_review' || nextAction === 'monitor') {
+        renderWorkItemGuidance({
+            title: nextAction === 'manual_review' ? 'Manual Review Required' : 'Monitor Recommendation',
+            label,
+            tone: 'bad',
+            steps: [
+                workItem?.risk?.reason ? `Review the current blocker detail: ${workItem.risk.reason}.` : 'Review the latest blocker detail for this item.',
+                'Inspect the latest event and cleanup rows in project detail to decide whether a direct retry is safe.',
+                'If the blocker is understood and reversible, use the available item action; otherwise leave the item visible in Needs Manual Attention and continue escalation handling.',
+            ],
+        });
+        document.getElementById('project-detail-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function formatDate(value) {
+    if (!value) {
+        return "n/a";
+    }
+    return new Date(value).toLocaleString();
+}
+
+function formatAgeSeconds(value) {
+    if (value == null) {
+        return 'n/a';
+    }
+    if (value < 60) {
+        return `${value}s`;
+    }
+    if (value < 3600) {
+        return `${Math.floor(value / 60)}m`;
+    }
+    if (value < 86400) {
+        return `${Math.floor(value / 3600)}h`;
+    }
+    return `${Math.floor(value / 86400)}d`;
+}
+
+function formatEventSourceLabel(source) {
+    if (source === 'recommended_action') {
+        return 'recommended';
+    }
+    if (source === 'manual_action') {
+        return 'manual';
+    }
+    if (!source) {
+        return 'system';
+    }
+    return source;
+}
+
+function getActionButtonLabel(actionItem) {
+    if (!actionItem || !actionItem.actionType) {
+        return '';
+    }
+    if (actionItem.actionType === 'persistEvidence') {
+        return 'Persist now';
+    }
+    if (actionItem.actionType === 'bootstrapGovernance') {
+        return 'Run bootstrap';
+    }
+    if (actionItem.actionType === 'syncMissingRoleOwners') {
+        return 'Sync roles';
+    }
+    if (actionItem.actionType === 'syncMissingScriptSignoffs') {
+        return 'Sync sign-offs';
+    }
+    if (actionItem.actionType === 'focusRoleOwner') {
+        return 'Open role form';
+    }
+    if (actionItem.actionType === 'focusScriptSignoff') {
+        return 'Open sign-off form';
+    }
+    if (actionItem.actionType === 'focusShadowSync') {
+        return 'Open sync panel';
+    }
+    if (actionItem.actionType === 'focusWorkforceBlockers') {
+        return 'Open project detail';
+    }
+    if (actionItem.actionType === 'manual') {
+        return 'Show guidance';
+    }
+    return '';
+}
+
+function renderManualGuidance(actionItem) {
+    const targetSetting = actionItem.targetSetting ? `Setting: ${actionItem.targetSetting}` : 'Manual operator action';
+    const steps = actionItem.guidanceSteps || [];
+    document.getElementById('cutover-guidance-label').textContent = targetSetting;
+    document.getElementById('cutover-guidance-body').innerHTML = `
+        <div class="list-item">
+            <div class="title-row">
+                <strong>${escapeHtml(actionItem.guidanceTitle || actionItem.label || 'Manual guidance')}</strong>
+                <span class="pill warn">manual</span>
+            </div>
+            <div class="meta-row">
+                <span>${escapeHtml(actionItem.label || '')}</span>
+            </div>
+        </div>
+        ${steps.length ? steps.map((step, index) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>Step ${escapeHtml(index + 1)}</strong>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(step)}</span>
+                </div>
+            </div>
+        `).join('') : '<div class="empty">No manual guidance provided.</div>'}
+    `;
+    document.getElementById('cutover-guidance-body').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function focusShadowSyncAction(actionItem) {
+    renderManualGuidance(actionItem);
+    document.getElementById('shadow-summary-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function focusWorkforceBlockersAction(actionItem) {
+    renderManualGuidance(actionItem);
+    const problematicProject = (state.dashboard?.projects || []).find(
+        (project) => project.staleWarning || Number(project.progress?.failed || 0) > 0
+    );
+    if (problematicProject) {
+        await loadProjectDetail(problematicProject.id);
+        document.getElementById('project-detail-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+    }
+    document.getElementById('project-list-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderDashboardStats(payload) {
+    const cards = [
+        ["Ready", payload.queueSummary.readyCount],
+        ["Assigned", payload.queueSummary.assignedCount],
+        ["Temp Done", payload.queueSummary.tempDoneCount],
+        ["Failed", payload.queueSummary.failedCount],
+        ["Stale Projects", payload.staleProjectCount],
+    ];
+    document.getElementById("dashboard-stats").innerHTML = cards.map(([label, value]) => `
+        <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `).join("");
+}
+
+function renderShadowSummary(payload) {
+    state.shadow = payload;
+    document.getElementById("shadow-summary-label").textContent = `${payload.incidentCount} incident(s)`;
+    const workforceProvenance = payload.workforce?.recentEventSources || { total: 0, recommended: 0, manual: 0, system: 0 };
+    const shadowCards = [
+        ["Planner Golden", `${payload.planner.matchedGolden}/${payload.planner.scenarioCount}`],
+        ["Planner Legacy", `${payload.planner.matchedLegacy}/${payload.planner.scenarioCount}`],
+        ["Stale Syncs", payload.sync.staleCount],
+        ["Stale Projects", payload.workforce.staleProjectCount],
+        ["Failed Work", payload.workforce.queue.failed],
+        ["Recommended Actions", workforceProvenance.recommended],
+    ];
+    document.getElementById("shadow-stats").innerHTML = shadowCards.map(([label, value]) => `
+        <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `).join("");
+
+    const incidents = payload.incidents.length
+        ? payload.incidents.map((incident) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(incident.message)}</strong>
+                    <span class="pill ${incident.severity === "critical" ? "bad" : "warn"}">${escapeHtml(incident.severity)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(incident.scope)}</span>
+                    <span>${escapeHtml(incident.code)}</span>
+                </div>
+            </div>
+        `).join("")
+        : '<div class="empty">No active shadow incidents.</div>';
+
+    const syncRows = payload.sync.corporations.length
+        ? payload.sync.corporations.map((corporation) => {
+            const staleKinds = Object.values(corporation.byKind)
+                .filter((item) => item.isStale)
+                .map((item) => item.kind);
+            return `
+                <div class="list-item">
+                    <div class="title-row">
+                        <strong>Corporation ${escapeHtml(corporation.corporationId)}</strong>
+                        <span class="pill ${staleKinds.length ? "warn" : "good"}">${staleKinds.length ? staleKinds.length + " stale" : "fresh"}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>${escapeHtml(staleKinds.length ? staleKinds.join(", ") : "All tracked sync kinds fresh")}</span>
+                    </div>
+                </div>
+            `;
+        }).join("")
+        : '<div class="empty">No corporation sync posture available yet.</div>';
+
+    document.getElementById("shadow-incidents").innerHTML = incidents;
+    document.getElementById("shadow-sync").innerHTML = syncRows;
+}
+
+function renderCutoverReadiness(payload) {
+    state.cutover = payload;
+    document.getElementById("cutover-mode-label").textContent = `${payload.mode} mode`;
+    const cards = [
+        ["Go / No-Go", payload.goNoGo ? "GO" : "NO-GO"],
+        ["Read-only", payload.readOnlyAssignment ? "ON" : "OFF"],
+        ["Pilot Users", payload.pilotUserIds.length],
+        ["Shadow Incidents", payload.shadow.incidentCount],
+        ["Script Sign-Offs", `${payload.scriptSignoffs.validatedCount}/${payload.scriptSignoffs.requiredCount}`],
+    ];
+    document.getElementById("cutover-stats").innerHTML = cards.map(([label, value]) => `
+        <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong></div>
+    `).join("");
+
+    document.getElementById("cutover-checklist").innerHTML = Object.entries(payload.checklist).map(([key, value]) => `
+        <div class="list-item">
+            <div class="title-row">
+                <strong>${escapeHtml(key)}</strong>
+                <span class="pill ${value ? "good" : "bad"}">${value ? "ok" : "missing"}</span>
+            </div>
+        </div>
+    `).join("");
+
+    document.getElementById("cutover-blockers").innerHTML = payload.blockers.length
+        ? payload.blockers.map((blocker) => `
+            <div class="list-item">
+                <strong>${escapeHtml(blocker)}</strong>
+            </div>
+        `).join("")
+        : '<div class="empty">No current cutover blockers.</div>';
+
+    document.getElementById("cutover-script-signoffs").innerHTML = payload.scriptSignoffs.items.length
+        ? payload.scriptSignoffs.items.map((item) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(item.scriptName)}</strong>
+                    <span class="pill ${item.status === "validated" ? "good" : item.status === "blocked" ? "bad" : "warn"}">${escapeHtml(item.status)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(item.signedOffBy || "unassigned")}</span>
+                    <span>${escapeHtml(item.signedOffAt ? formatDate(item.signedOffAt) : "not signed off")}</span>
+                </div>
+                ${item.notes ? `<div class="meta-row"><span>${escapeHtml(item.notes)}</span></div>` : ""}
+            </div>
+        `).join("")
+        : '<div class="empty">No critical script sign-offs configured.</div>';
+
+    document.getElementById("cutover-signoff-events").innerHTML = payload.scriptSignoffs.recentEvents.length
+        ? payload.scriptSignoffs.recentEvents.map((event) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(event.scriptName)}</strong>
+                    <span class="pill ${event.newStatus === "validated" ? "good" : event.newStatus === "blocked" ? "bad" : "warn"}">${escapeHtml(event.newStatus)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(event.previousStatus || "new")}</span>
+                    <span>${escapeHtml(event.changedBy || "system")}</span>
+                    <span>${escapeHtml(formatDate(event.effectiveAt))}</span>
+                </div>
+                ${event.notes ? `<div class="meta-row"><span>${escapeHtml(event.notes)}</span></div>` : ""}
+            </div>
+        `).join("")
+        : '<div class="empty">No sign-off events recorded yet.</div>';
+
+    document.getElementById("cutover-role-assignments").innerHTML = payload.roleAssignments.items.length
+        ? payload.roleAssignments.items.map((item) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(item.roleName)}</strong>
+                    <span class="pill ${item.assigned ? "good" : "bad"}">${escapeHtml(item.assigned ? item.source : "missing")}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(item.assignedTo || "unassigned")}</span>
+                    <span>${escapeHtml(item.assignedAt ? formatDate(item.assignedAt) : "not assigned")}</span>
+                </div>
+                ${item.notes ? `<div class="meta-row"><span>${escapeHtml(item.notes)}</span></div>` : ""}
+            </div>
+        `).join("")
+        : '<div class="empty">No cutover roles configured.</div>';
+
+    document.getElementById("cutover-role-events").innerHTML = payload.roleAssignments.recentEvents.length
+        ? payload.roleAssignments.recentEvents.map((event) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(event.roleName)}</strong>
+                    <span class="pill ${event.newAssignedTo ? "good" : "warn"}">${escapeHtml(event.newAssignedTo || "cleared")}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(event.previousAssignedTo || "unassigned")}</span>
+                    <span>${escapeHtml(event.changedBy || "system")}</span>
+                    <span>${escapeHtml(formatDate(event.effectiveAt))}</span>
+                </div>
+                ${event.notes ? `<div class="meta-row"><span>${escapeHtml(event.notes)}</span></div>` : ""}
+            </div>
+        `).join("")
+        : '<div class="empty">No role assignment events recorded yet.</div>';
+
+    renderCutoverControls(payload);
+}
+
+function renderCutoverPilotReadiness(payload) {
+    state.pilotReadiness = payload;
+    const activity = payload.activitySummary || {};
+    document.getElementById('cutover-pilot-label').textContent = `${payload.mode || 'n/a'} mode · ${payload.pilotStage || 'pre_pilot'}`;
+    document.getElementById('cutover-pilot-stats').innerHTML = [
+        ['Pilot Start', payload.pilotStartGoNoGo ? 'GO' : 'NO-GO'],
+        ['Pilot Expansion', payload.pilotExpansionGoNoGo ? 'GO' : 'NO-GO'],
+        ['Pilot Users', (payload.pilotUserIds || []).length],
+        ['Claims', activity.claimCount || 0],
+        ['Temp Done', activity.tempDoneCount || 0],
+        ['Verified', activity.verifiedOkCount || 0],
+        ['Verify Miss', activity.verifyMissCount || 0],
+    ].map(([label, value]) => `
+        <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `).join('');
+
+    document.getElementById('cutover-pilot-checklist').innerHTML = Object.entries(payload.checklist || {}).map(([key, value]) => `
+        <div class="list-item">
+            <div class="title-row">
+                <strong>${escapeHtml(key)}</strong>
+                <span class="pill ${value ? 'good' : 'bad'}">${value ? 'ok' : 'missing'}</span>
+            </div>
+        </div>
+    `).join('');
+
+    document.getElementById('cutover-pilot-activity').innerHTML = [
+        ['First claim', activity.firstClaimAt ? formatDate(activity.firstClaimAt) : 'not observed'],
+        ['First temp done', activity.firstTempDoneAt ? formatDate(activity.firstTempDoneAt) : 'not observed'],
+        ['First verified', activity.firstVerifiedOkAt ? formatDate(activity.firstVerifiedOkAt) : 'not observed'],
+        ['First verify miss', activity.firstVerifyMissAt ? formatDate(activity.firstVerifyMissAt) : 'not observed'],
+        ['Latest pilot event', activity.latestPilotEventAt ? formatDate(activity.latestPilotEventAt) : 'not observed'],
+        ['Verification attempts', activity.verificationAttemptCount || 0],
+    ].map(([label, value]) => `
+        <div class="list-item">
+            <div class="title-row">
+                <strong>${escapeHtml(label)}</strong>
+                <span>${escapeHtml(value)}</span>
+            </div>
+        </div>
+    `).join('');
+
+    document.getElementById('cutover-pilot-start-blockers').innerHTML = (payload.startBlockers || []).length
+        ? (payload.startBlockers || []).map((blocker) => `
+            <div class="list-item">
+                <strong>${escapeHtml(blocker)}</strong>
+            </div>
+        `).join('')
+        : '<div class="empty">Pilot start posture is clear.</div>';
+
+    document.getElementById('cutover-pilot-expansion-blockers').innerHTML = (payload.expansionBlockers || []).length
+        ? (payload.expansionBlockers || []).map((blocker) => `
+            <div class="list-item">
+                <strong>${escapeHtml(blocker)}</strong>
+            </div>
+        `).join('')
+        : '<div class="empty">Pilot expansion posture is clear.</div>';
+}
+
+function renderCutoverPilotHistory(payload) {
+    const snapshots = payload.snapshots || [];
+    document.getElementById('cutover-pilot-history-label').textContent = `${snapshots.length} snapshot(s)`;
+    document.getElementById('cutover-pilot-history').innerHTML = snapshots.length
+        ? snapshots.map((snapshot) => {
+            const pilot = snapshot.payload || {};
+            const activity = pilot.activitySummary || {};
+            return `
+                <div class="list-item">
+                    <div class="title-row">
+                        <strong>${escapeHtml(snapshot.snapshotDate)}</strong>
+                        <span class="pill ${snapshot.goNoGo ? 'good' : 'bad'}">${snapshot.goNoGo ? 'expand' : 'hold'}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Stage ${escapeHtml(pilot.pilotStage || 'pre_pilot')}</span>
+                        <span>Claims ${escapeHtml(activity.claimCount || 0)}</span>
+                        <span>Verified ${escapeHtml(activity.verifiedOkCount || 0)}</span>
+                        <span>Verify miss ${escapeHtml(activity.verifyMissCount || 0)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>${escapeHtml(snapshot.updatedAt ? formatDate(snapshot.updatedAt) : 'n/a')}</span>
+                        <span>${escapeHtml((pilot.expansionBlockers || []).length ? pilot.expansionBlockers[0] : 'Expansion posture clear')}</span>
+                    </div>
+                </div>
+            `;
+        }).join('')
+        : '<div class="empty">No pilot readiness snapshots stored yet.</div>';
+}
+
+function renderCutoverPilotTrend(payload) {
+    const items = payload.trend || [];
+    document.getElementById('cutover-pilot-trend-label').textContent = `${items.length} point(s)`;
+    document.getElementById('cutover-pilot-trend').innerHTML = items.length
+        ? items.map((item) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(item.snapshotDate)}</strong>
+                    <span class="pill ${item.pilotExpansionGoNoGo ? 'good' : 'bad'}">${item.pilotExpansionGoNoGo ? 'expand' : 'hold'}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Stage ${escapeHtml(item.pilotStage)}</span>
+                    <span>Start ${escapeHtml(item.pilotStartGoNoGo ? 'GO' : 'NO-GO')}</span>
+                    <span>Expansion blockers ${escapeHtml(item.expansionBlockerCount)}</span>
+                    <span>Pilot users ${escapeHtml(item.pilotUserCount)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Claims ${escapeHtml(item.claimCount)}</span>
+                    <span>Temp done ${escapeHtml(item.tempDoneCount)}</span>
+                    <span>Verified ${escapeHtml(item.verifiedOkCount)}</span>
+                    <span>Verify miss ${escapeHtml(item.verifyMissCount)}</span>
+                </div>
+            </div>
+        `).join('')
+        : '<div class="empty">No pilot trend data stored yet.</div>';
+}
+
+function renderCutoverControls(payload) {
+    const scriptSelect = document.getElementById('script-signoff-name');
+    const roleSelect = document.getElementById('cutover-role-name');
+    const selectedScript = scriptSelect.value;
+    const selectedRole = roleSelect.value;
+
+    scriptSelect.innerHTML = (payload.scriptSignoffs.items || []).map((item) => `
+        <option value="${escapeHtml(item.scriptName)}">${escapeHtml(item.scriptName)}</option>
+    `).join('');
+    if ((payload.scriptSignoffs.items || []).some((item) => item.scriptName === selectedScript)) {
+        scriptSelect.value = selectedScript;
+    }
+
+    roleSelect.innerHTML = (payload.roleAssignments.items || []).map((item) => `
+        <option value="${escapeHtml(item.roleName)}">${escapeHtml(item.roleName)}</option>
+    `).join('');
+    if ((payload.roleAssignments.items || []).some((item) => item.roleName === selectedRole)) {
+        roleSelect.value = selectedRole;
+    }
+}
+
+function renderCutoverHistory(payload) {
+    const snapshots = payload.snapshots || [];
+    document.getElementById("cutover-history-label").textContent = `${snapshots.length} snapshot(s)`;
+    document.getElementById("cutover-history").innerHTML = snapshots.length
+        ? snapshots.map((snapshot) => {
+            const cutover = snapshot.payload || {};
+            const signoffs = cutover.scriptSignoffs || {};
+            return `
+                <div class="list-item">
+                    <div class="title-row">
+                        <strong>${escapeHtml(snapshot.snapshotDate)}</strong>
+                        <span class="pill ${snapshot.goNoGo ? "good" : "bad"}">${snapshot.goNoGo ? "GO" : "NO-GO"}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Mode ${escapeHtml(cutover.mode || "n/a")}</span>
+                        <span>Incidents ${escapeHtml(snapshot.incidentCount)}</span>
+                        <span>Sign-offs ${escapeHtml(`${signoffs.validatedCount || 0}/${signoffs.requiredCount || 0}`)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>${escapeHtml(snapshot.updatedAt ? formatDate(snapshot.updatedAt) : "n/a")}</span>
+                        <span>${escapeHtml((cutover.blockers || []).length ? cutover.blockers[0] : "No blockers")}</span>
+                    </div>
+                </div>
+            `;
+        }).join("")
+        : '<div class="empty">No cutover evidence snapshots stored yet.</div>';
+}
+
+function renderCutoverTrend(payload) {
+    const items = payload.trend || [];
+    document.getElementById("cutover-trend-label").textContent = `${items.length} point(s)`;
+    document.getElementById("cutover-trend").innerHTML = items.length
+        ? items.map((item) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(item.snapshotDate)}</strong>
+                    <span class="pill ${item.goNoGo ? "good" : "bad"}">${item.goNoGo ? "GO" : "NO-GO"}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Roles ${escapeHtml(`${item.assignedRoles}/${item.requiredRoles}`)}</span>
+                    <span>Sign-offs ${escapeHtml(`${item.validatedSignoffs}/${item.requiredSignoffs}`)}</span>
+                    <span>Blockers ${escapeHtml(item.blockerCount)}</span>
+                    <span>Incidents ${escapeHtml(item.incidentCount)}</span>
+                </div>
+            </div>
+        `).join("")
+        : '<div class="empty">No cutover trend data stored yet.</div>';
+}
+
+function renderCutoverPreflight(payload) {
+    const current = payload.current || {};
+    const deltas = payload.deltasVsLatestSnapshot || {};
+    const actions = payload.recommendedActions || [];
+    const actionItems = payload.recommendedActionItems || [];
+    const latestStoredPreflight = payload.latestStoredPreflightSnapshot;
+    const workforceProvenance = current.workforceProvenance || { total: 0, recommended: 0, manual: 0, system: 0 };
+    document.getElementById("cutover-preflight-label").textContent = latestStoredPreflight
+        ? `${payload.readiness?.mode || "n/a"} mode · stored ${formatDate(latestStoredPreflight.updatedAt)}`
+        : `${payload.readiness?.mode || "n/a"} mode`;
+    document.getElementById("cutover-preflight-stats").innerHTML = [
+        ["Preflight", payload.effectiveGoNoGo ? "GO" : "NO-GO"],
+        ["Roles", `${current.assignedRoles || 0}/${current.requiredRoles || 0}`],
+        ["Sign-offs", `${current.validatedSignoffs || 0}/${current.requiredSignoffs || 0}`],
+        ["Blockers", current.blockerCount || 0],
+        ["Preflight Blockers", current.preflightBlockerCount || 0],
+        ["Incidents", current.incidentCount || 0],
+        ["Recommended", workforceProvenance.recommended || 0],
+        ["Manual", workforceProvenance.manual || 0],
+        ["System", workforceProvenance.system || 0],
+    ].map(([label, value]) => `
+        <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `).join("");
+
+    document.getElementById("cutover-preflight-delta").innerHTML = [
+        ["Assigned Roles", deltas.assignedRoles ?? 0],
+        ["Validated Sign-offs", deltas.validatedSignoffs ?? 0],
+        ["Blockers", deltas.blockerCount ?? 0],
+        ["Incidents", deltas.incidentCount ?? 0],
+    ].map(([label, value]) => `
+        <div class="list-item">
+            <div class="title-row">
+                <strong>${escapeHtml(label)}</strong>
+                <span class="pill ${Number(value) > 0 ? "good" : Number(value) < 0 ? "warn" : ""}">${escapeHtml(value)}</span>
+            </div>
+        </div>
+    `).join("");
+
+    document.getElementById("cutover-preflight-actions").innerHTML = actions.length
+        ? actions.map((action, index) => {
+            const actionItem = actionItems[index] || {};
+            const buttonLabel = getActionButtonLabel(actionItem);
+            const buttonHtml = buttonLabel
+                ? `<button type="button" class="action-trigger" data-action-index="${index}">${escapeHtml(buttonLabel)}</button>`
+                : '';
+            return `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(action)}</strong>
+                    ${buttonHtml}
+                </div>
+            </div>
+        `;
+        }).join("")
+        : '<div class="empty">No recommended actions. Governance checks are aligned.</div>';
+
+    if ((payload.preflightBlockers || []).length) {
+        document.getElementById("cutover-preflight-actions").innerHTML = `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>Preflight blockers</strong>
+                    <span class="pill bad">${escapeHtml((payload.preflightBlockers || []).length)}</span>
+                </div>
+                ${(payload.preflightBlockers || []).map((blocker) => `<div class="meta-row"><span>${escapeHtml(blocker)}</span></div>`).join('')}
+            </div>
+        ` + document.getElementById("cutover-preflight-actions").innerHTML;
+    }
+
+    document.querySelectorAll('[data-action-index]').forEach((node) => {
+        node.addEventListener('click', () => triggerRecommendedAction(actionItems[Number(node.dataset.actionIndex)] || {}));
+    });
+}
+
+function focusRoleOwnerAction(actionItem) {
+    const roleName = actionItem.targetRoleName || '';
+    if (roleName) {
+        document.getElementById('cutover-role-name').value = roleName;
+    }
+    document.getElementById('cutover-role-owner').focus();
+    document.getElementById('cutover-role-owner').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById('cutover-role-action-status').textContent = roleName
+        ? `Ready to assign ${roleName}`
+        : 'Ready to assign missing role';
+}
+
+function focusScriptSignoffAction(actionItem) {
+    const scriptName = actionItem.targetScriptName || '';
+    if (scriptName) {
+        document.getElementById('script-signoff-name').value = scriptName;
+    }
+    if (actionItem.targetStatus) {
+        document.getElementById('script-signoff-status').value = actionItem.targetStatus;
+    }
+    document.getElementById('script-signoff-by').focus();
+    document.getElementById('script-signoff-by').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById('cutover-script-action-status').textContent = scriptName
+        ? `Ready to update ${scriptName}`
+        : 'Ready to update critical script';
+}
+
+function triggerRecommendedAction(actionItem) {
+    if (!actionItem || !actionItem.actionType) {
+        return;
+    }
+    if (actionItem.actionType === 'persistEvidence') {
+        persistEvidence();
+        return;
+    }
+    if (actionItem.actionType === 'bootstrapGovernance') {
+        bootstrapGovernance();
+        return;
+    }
+    if (actionItem.actionType === 'syncMissingRoleOwners') {
+        syncMissingRoleOwners();
+        return;
+    }
+    if (actionItem.actionType === 'syncMissingScriptSignoffs') {
+        syncMissingScriptSignoffs();
+        return;
+    }
+    if (actionItem.actionType === 'focusShadowSync') {
+        focusShadowSyncAction(actionItem);
+        return;
+    }
+    if (actionItem.actionType === 'focusWorkforceBlockers') {
+        focusWorkforceBlockersAction(actionItem);
+        return;
+    }
+    if (actionItem.actionType === 'focusRoleOwner') {
+        focusRoleOwnerAction(actionItem);
+        return;
+    }
+    if (actionItem.actionType === 'focusScriptSignoff') {
+        focusScriptSignoffAction(actionItem);
+        return;
+    }
+    if (actionItem.actionType === 'manual') {
+        renderManualGuidance(actionItem);
+    }
+}
+
+function renderCutoverPreflightHistory(payload) {
+    const snapshots = payload.snapshots || [];
+    document.getElementById("cutover-preflight-history-label").textContent = `${snapshots.length} snapshot(s)`;
+    document.getElementById("cutover-preflight-history").innerHTML = snapshots.length
+        ? snapshots.map((snapshot) => {
+            const report = snapshot.payload || {};
+            const current = report.current || {};
+            const workforceProvenance = current.workforceProvenance || { total: 0, recommended: 0, manual: 0, system: 0 };
+            const actions = report.recommendedActions || [];
+            return `
+                <div class="list-item">
+                    <div class="title-row">
+                        <strong>${escapeHtml(snapshot.snapshotDate)}</strong>
+                        <span class="pill ${Number(current.blockerCount || 0) === 0 ? "good" : "warn"}">${escapeHtml(`${current.blockerCount || 0} blocker(s)`)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Roles ${escapeHtml(`${current.assignedRoles || 0}/${current.requiredRoles || 0}`)}</span>
+                        <span>Sign-offs ${escapeHtml(`${current.validatedSignoffs || 0}/${current.requiredSignoffs || 0}`)}</span>
+                        <span>Incidents ${escapeHtml(current.incidentCount || 0)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Recommended ${escapeHtml(workforceProvenance.recommended || 0)}</span>
+                        <span>Manual ${escapeHtml(workforceProvenance.manual || 0)}</span>
+                        <span>System ${escapeHtml(workforceProvenance.system || 0)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>${escapeHtml(snapshot.updatedAt ? formatDate(snapshot.updatedAt) : "n/a")}</span>
+                        <span>${escapeHtml(actions.length ? actions[0] : "No recommended actions")}</span>
+                    </div>
+                </div>
+            `;
+        }).join("")
+        : '<div class="empty">No stored preflight snapshots yet.</div>';
+}
+
+function renderCutoverPreflightChanges(payload) {
+    const changes = payload.changesVsStoredPreflight || {};
+    document.getElementById("cutover-preflight-change-label").textContent = changes.hasStoredBaseline
+        ? 'Compared with latest stored preflight'
+        : 'No stored baseline yet';
+
+    const currentWorkforceProvenance = changes.currentWorkforceProvenance || { total: 0, recommended: 0, manual: 0, system: 0 };
+    const workforceProvenanceDelta = changes.workforceProvenanceDelta || { total: 0, recommended: 0, manual: 0, system: 0 };
+
+    document.getElementById("cutover-preflight-change-summary").innerHTML = changes.hasStoredBaseline
+        ? [
+            ["Go / No-Go", changes.goNoGoChanged ? `${changes.previousGoNoGo ? 'GO' : 'NO-GO'} -> ${changes.currentGoNoGo ? 'GO' : 'NO-GO'}` : 'No change'],
+            ["Mode", changes.modeChanged ? `${changes.previousMode || 'n/a'} -> ${changes.currentMode || 'n/a'}` : (changes.currentMode || 'n/a')],
+            ["Blockers Added", (changes.blockersAdded || []).length],
+            ["Blockers Removed", (changes.blockersRemoved || []).length],
+            ["Actions Added", (changes.actionsAdded || []).length],
+            ["Actions Removed", (changes.actionsRemoved || []).length],
+            ["Recommended Delta", `${workforceProvenanceDelta.recommended >= 0 ? '+' : ''}${workforceProvenanceDelta.recommended}`],
+            ["Manual Delta", `${workforceProvenanceDelta.manual >= 0 ? '+' : ''}${workforceProvenanceDelta.manual}`],
+            ["System Delta", `${workforceProvenanceDelta.system >= 0 ? '+' : ''}${workforceProvenanceDelta.system}`],
+            ["Current Provenance", `R${currentWorkforceProvenance.recommended || 0} / M${currentWorkforceProvenance.manual || 0} / S${currentWorkforceProvenance.system || 0}`],
+        ].map(([label, value]) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(label)}</strong>
+                    <span class="pill">${escapeHtml(value)}</span>
+                </div>
+            </div>
+        `).join("")
+        : '<div class="empty">Persist evidence first to establish a preflight comparison baseline.</div>';
+
+    if (!changes.hasStoredBaseline) {
+        document.getElementById("cutover-preflight-change-details").innerHTML = '<div class="empty">No blocker or action diff available yet.</div>';
+        return;
+    }
+
+    const detailRows = [
+        ...(changes.detailRows || []),
+    ];
+
+    document.getElementById("cutover-preflight-change-details").innerHTML = detailRows.length
+        ? detailRows.map((item, index) => {
+            const buttonLabel = getActionButtonLabel(item.actionItem);
+            const buttonHtml = buttonLabel
+                ? `<button type="button" class="change-action-trigger" data-change-index="${index}">${escapeHtml(buttonLabel)}</button>`
+                : '';
+            return `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(item.label)}</strong>
+                    <span class="pill ${item.tone}">${escapeHtml(item.tone)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(item.value)}</span>
+                    ${buttonHtml}
+                </div>
+            </div>
+        `;
+        }).join("")
+        : '<div class="empty">No blocker or action differences against the latest stored preflight.</div>';
+
+    document.querySelectorAll('[data-change-index]').forEach((node) => {
+        node.addEventListener('click', () => triggerRecommendedAction(detailRows[Number(node.dataset.changeIndex)]?.actionItem || {}));
+    });
+}
+
+function renderProjectList(payload) {
+    const container = document.getElementById("project-list");
+    document.getElementById("project-count-label").textContent = `${payload.projects.length} project(s)`;
+    if (!payload.projects.length) {
+        container.innerHTML = '<div class="empty">No projects available yet.</div>';
+        return;
+    }
+    container.innerHTML = payload.projects.map((project) => `
+        <button type="button"
+            class="list-item is-clickable ${state.selectedProjectId === project.id ? "is-selected" : ""}"
+            data-project-id="${project.id}">
+            <div class="title-row">
+                <strong>${escapeHtml(project.name)}</strong>
+                <span class="pill ${project.staleWarning ? "warn" : "good"}">${project.staleWarning ? "Stale" : "Fresh"}</span>
+            </div>
+            <div class="meta-row">
+                <span>Priority ${escapeHtml(project.priority)}</span>
+                <span>Status ${escapeHtml(project.status)}</span>
+                <span>Total ${escapeHtml(project.progress.total)}</span>
+                <span>Failed ${escapeHtml(project.progress.failed)}</span>
+            </div>
+        </button>
+    `).join("");
+
+    container.querySelectorAll("[data-project-id]").forEach((node) => {
+        node.addEventListener("click", () => loadProjectDetail(Number(node.dataset.projectId)));
+    });
+}
+
+function renderProjectDetail(payload) {
+    state.projectDetail = payload;
+    const detail = document.getElementById("project-detail");
+    document.getElementById("detail-title").textContent = payload.project.name;
+    document.getElementById("detail-stale-pill").hidden = !payload.staleWarning;
+
+    const filterByRisk = (items) => state.highRiskOnly ? items.filter((item) => item.risk?.tone === 'bad') : items;
+    const filterRecentEvents = (events) => {
+        if (state.recentEventSourceFilter === 'recommended') {
+            return events.filter((event) => event.source === 'recommended_action');
+        }
+        if (state.recentEventSourceFilter === 'manual') {
+            return events.filter((event) => event.source === 'manual_action');
+        }
+        if (state.recentEventSourceFilter === 'system') {
+            return events.filter((event) => !event.source);
+        }
+        return events;
+    };
+
+    const renderDirectorWorkItemActions = (item) => {
+        const actions = [];
+        const nextAction = item.risk?.nextAction;
+        if (canRunRecommendedAction(nextAction)) {
+            actions.push(
+                `<button type="button" class="work-item-recommended-trigger" data-work-item-id="${escapeHtml(item.id)}" data-next-action="${escapeHtml(nextAction)}">Run Recommended: ${escapeHtml(getRecommendedActionLabel(nextAction))}</button>`
+            );
+        } else if (canFocusRecommendedAction(nextAction)) {
+            actions.push(
+                `<button type="button" class="work-item-guidance-trigger" data-work-item-id="${escapeHtml(item.id)}" data-next-action="${escapeHtml(nextAction)}">${escapeHtml(getFocusActionLabel(nextAction))}</button>`
+            );
+        }
+
+        if (item.status === 'assigned') {
+            if (nextAction !== 'release_or_monitor') {
+                actions.push(`<button type="button" class="work-item-release-trigger" data-work-item-id="${escapeHtml(item.id)}">Release</button>`);
+            }
+        } else if (item.status === 'temp_done') {
+            if (nextAction !== 'retry_verify') {
+                actions.push(`<button type="button" class="work-item-verify-trigger" data-work-item-id="${escapeHtml(item.id)}">Retry Verify</button>`);
+            }
+            if (nextAction !== 'requeue') {
+                actions.push(`<button type="button" class="work-item-requeue-trigger" data-work-item-id="${escapeHtml(item.id)}">Requeue</button>`);
+            }
+        } else if (nextAction !== 'requeue') {
+            actions.push(`<button type="button" class="work-item-requeue-trigger" data-work-item-id="${escapeHtml(item.id)}">Requeue</button>`);
+        }
+
+        return actions.join('');
+    };
+
+    const renderDirectorWorkItems = (items, emptyLabel) => items.length
+        ? items.map((item) => `
+            <div class="table-row">
+                <div class="title-row">
+                    <strong>Work item ${escapeHtml(item.id)}</strong>
+                    <span class="pill ${escapeHtml(item.risk?.tone || '')}">${escapeHtml(item.risk?.label || 'queued')}</span>
+                    <span class="pill ${item.status === 'failed' ? 'bad' : item.status === 'temp_done' ? 'warn' : ''}">${escapeHtml(item.status)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Plan job ${escapeHtml(item.planJobId || 'n/a')}</span>
+                    <span>Attempt ${escapeHtml(item.attempt)}</span>
+                    <span>${escapeHtml(item.assignee?.username || 'unassigned')}</span>
+                </div>
+                ${item.risk?.reason ? `<div class="meta-row"><span>Risk detail ${escapeHtml(item.risk.reason)}</span></div>` : ''}
+                ${item.risk?.nextAction ? `<div class="meta-row"><span>Recommended action ${escapeHtml(item.risk.nextAction)}</span></div>` : ''}
+                ${item.latestEvent ? `
+                    <div class="meta-row">
+                        <span>Latest event ${escapeHtml(item.latestEvent.eventType)}</span>
+                        <span class="pill ${escapeHtml(item.latestEvent.outcomeTone || '')}">${escapeHtml(item.latestEvent.outcomeLabel || 'event')}</span>
+                        ${item.latestEvent.source ? `<span class="pill">${escapeHtml(formatEventSourceLabel(item.latestEvent.source))}</span>` : ''}
+                        <span>${escapeHtml(formatDate(item.latestEvent.createdAt))}</span>
+                    </div>
+                    ${item.latestEvent.summary ? `<div class="meta-row"><span>${escapeHtml(item.latestEvent.summary)}</span></div>` : ''}
+                ` : ''}
+                ${item.latestCleanupEvent ? `
+                    <div class="meta-row">
+                        <span>Latest cleanup ${escapeHtml(item.latestCleanupEvent.eventType)}</span>
+                        <span class="pill ${escapeHtml(item.latestCleanupEvent.outcomeTone || '')}">${escapeHtml(item.latestCleanupEvent.outcomeLabel || 'cleanup')}</span>
+                        ${item.latestCleanupEvent.source ? `<span class="pill">${escapeHtml(formatEventSourceLabel(item.latestCleanupEvent.source))}</span>` : ''}
+                        <span>${escapeHtml(formatDate(item.latestCleanupEvent.createdAt))}</span>
+                    </div>
+                    ${item.latestCleanupEvent.summary ? `<div class="meta-row"><span>${escapeHtml(item.latestCleanupEvent.summary)}</span></div>` : ''}
+                ` : ''}
+                <div class="actions" style="margin-top: 8px;">
+                    ${renderDirectorWorkItemActions(item)}
+                </div>
+            </div>
+        `).join("")
+        : `<div class="empty">${escapeHtml(emptyLabel)}</div>`;
+
+    const targets = payload.targets.length
+        ? payload.targets.map((target) => `
+            <div class="table-row">
+                <div class="title-row">
+                    <strong>Type ${escapeHtml(target.typeId)}</strong>
+                    <span class="pill ${target.isFinalOutput ? "good" : ""}">${target.isFinalOutput ? "Final output" : "Intermediate"}</span>
+                </div>
+                <div class="meta-row"><span>Quantity ${escapeHtml(target.quantity)}</span></div>
+            </div>
+        `).join("")
+        : '<div class="empty">No targets recorded.</div>';
+
+    const activities = payload.queueBreakdown.byActivity.length
+        ? payload.queueBreakdown.byActivity.map((item) => `
+            <div class="table-row">
+                <div class="title-row">
+                    <strong>Activity ${escapeHtml(item.activityId)}</strong>
+                    <span class="pill">Level ${escapeHtml(item.level)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Total ${escapeHtml(item.total)}</span>
+                    <span>Ready ${escapeHtml(item.ready)}</span>
+                    <span>Assigned ${escapeHtml(item.assigned)}</span>
+                    <span>Temp done ${escapeHtml(item.tempDone)}</span>
+                    <span>Failed ${escapeHtml(item.failed)}</span>
+                </div>
+            </div>
+        `).join("")
+        : '<div class="empty">No work items dispatched.</div>';
+
+    const activeWorkers = payload.activeWorkers.length
+        ? payload.activeWorkers.map((worker) => `
+            <div class="table-row">
+                <div class="title-row">
+                    <strong>${escapeHtml(worker.username)}</strong>
+                    <span class="pill">User ${escapeHtml(worker.userId)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Assigned ${escapeHtml(worker.assignedCount)}</span>
+                    <span>Temp done ${escapeHtml(worker.tempDoneCount)}</span>
+                    <span>Tracked items ${escapeHtml(worker.workItems.length)}</span>
+                </div>
+            </div>
+        `).join("")
+        : '<div class="empty">No active workers on this project.</div>';
+
+    const filteredEvents = filterRecentEvents(payload.recentEvents);
+    const eventRows = filteredEvents.length
+        ? filteredEvents.map((event) => `
+            <div class="table-row">
+                <div class="title-row">
+                    <strong>${escapeHtml(event.eventType)}</strong>
+                    <span class="pill">Work item ${escapeHtml(event.workItemId)}</span>
+                    <span class="pill">${escapeHtml(formatEventSourceLabel(event.source))}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(formatDate(event.createdAt))}</span>
+                    <span>Actor ${escapeHtml(event.actorUserId ?? "system")}</span>
+                </div>
+                ${event.summary ? `<div class="meta-row"><span>${escapeHtml(event.summary)}</span></div>` : ''}
+            </div>
+        `).join("")
+        : `<div class="empty">No ${escapeHtml(state.recentEventSourceFilter === 'all' ? 'recent' : state.recentEventSourceFilter)} events.</div>`;
+    const recentEventSources = payload.recentEventSources || { total: payload.recentEvents.length, recommended: 0, manual: 0, system: 0 };
+
+    const manualAttentionItems = renderDirectorWorkItems(payload.bottlenecks.manualAttention || [], 'No manual-attention items.');
+    const manualAttentionSummary = (payload.bottlenecks.manualAttentionSummary || []).length
+        ? payload.bottlenecks.manualAttentionSummary.map((entry) => `
+            <div class="table-row">
+                <div class="title-row">
+                    <strong>${escapeHtml(entry.label)}</strong>
+                    <span class="pill ${escapeHtml(entry.tone || '')}">${escapeHtml(entry.code)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Count ${escapeHtml(entry.count)}</span>
+                    <span>Next action ${escapeHtml(entry.nextAction)}</span>
+                    <span>Oldest age ${escapeHtml(formatAgeSeconds(entry.oldestAgeSeconds))}</span>
+                </div>
+                ${entry.firstActionableWorkItemId && canRunRecommendedAction(entry.nextAction)
+                    ? `<div class="actions" style="margin-top: 8px;"><button type="button" class="manual-attention-summary-trigger" data-work-item-id="${escapeHtml(entry.firstActionableWorkItemId)}" data-next-action="${escapeHtml(entry.nextAction)}">Run First Recommended</button></div>`
+                    : entry.firstWorkItemId && canFocusRecommendedAction(entry.nextAction)
+                        ? `<div class="actions" style="margin-top: 8px;"><button type="button" class="manual-attention-guidance-trigger" data-work-item-id="${escapeHtml(entry.firstWorkItemId)}" data-next-action="${escapeHtml(entry.nextAction)}">${escapeHtml(getFocusActionLabel(entry.nextAction))}</button></div>`
+                        : ''}
+            </div>
+        `).join("")
+        : '<div class="empty">No manual-attention summary.</div>';
+    const failedItems = renderDirectorWorkItems(filterByRisk(payload.bottlenecks.failed || []), state.highRiskOnly ? 'No high-risk failed items.' : 'No failed work items.');
+    const tempDoneItems = renderDirectorWorkItems(filterByRisk(payload.bottlenecks.tempDone || []), state.highRiskOnly ? 'No high-risk temp-done backlog.' : 'No temp-done backlog.');
+    const assignedItems = renderDirectorWorkItems(filterByRisk(payload.bottlenecks.assigned || []), state.highRiskOnly ? 'No high-risk aging assignments.' : 'No aging assigned items.');
+
+    detail.innerHTML = `
+        ${payload.staleWarning ? `<div class="banner">Jobs sync is stale for this project. Verify sync freshness before pushing more assignments.</div>` : ""}
+        <div class="stats">
+            <div class="stat"><span>Ready</span><strong>${escapeHtml(payload.queueBreakdown.byStatus.ready)}</strong></div>
+            <div class="stat"><span>Assigned</span><strong>${escapeHtml(payload.queueBreakdown.byStatus.assigned)}</strong></div>
+            <div class="stat"><span>Temp Done</span><strong>${escapeHtml(payload.queueBreakdown.byStatus.tempDone)}</strong></div>
+            <div class="stat"><span>Failed</span><strong>${escapeHtml(payload.queueBreakdown.byStatus.failed)}</strong></div>
+        </div>
+        <section class="panel-embedded">
+            <div class="title-row">
+                <h4>Recovery Actions</h4>
+                <span class="muted" id="project-recovery-status">Ready</span>
+            </div>
+            <div class="actions">
+                <button type="button" id="redispatch-project-button">Redispatch Project</button>
+                <button type="button" id="verify-batch-button">Run Verify Batch</button>
+                <button type="button" id="toggle-high-risk-items">${state.highRiskOnly ? 'Show All Bottlenecks' : 'High Risk Only'}</button>
+            </div>
+        </section>
+        <div class="grid two">
+            <section class="panel-embedded">
+                <h4>Targets</h4>
+                <div class="table">${targets}</div>
+            </section>
+            <section class="panel-embedded">
+                <h4>Activity Breakdown</h4>
+                <div class="table">${activities}</div>
+            </section>
+        </div>
+        <div class="grid two">
+            <section class="panel-embedded">
+                <h4>Active Workers</h4>
+                <div class="table">${activeWorkers}</div>
+            </section>
+            <section class="panel-embedded">
+                <h4>Bottlenecks</h4>
+                <div class="list">
+                    <div class="table-row"><strong>Needs manual attention:</strong> ${escapeHtml(payload.bottlenecks.manualAttention.length)}</div>
+                    <div class="table-row"><strong>Failed:</strong> ${escapeHtml(payload.bottlenecks.failed.length)}</div>
+                    <div class="table-row"><strong>Temp done:</strong> ${escapeHtml(payload.bottlenecks.tempDone.length)}</div>
+                    <div class="table-row"><strong>Assigned aging:</strong> ${escapeHtml(payload.bottlenecks.assigned.length)}</div>
+                </div>
+            </section>
+        </div>
+        <div class="grid two">
+            <section class="panel-embedded">
+                <h4>Needs Manual Attention</h4>
+                <div class="table">${manualAttentionItems}</div>
+            </section>
+            <section class="panel-embedded">
+                <h4>Manual Attention Summary</h4>
+                <div class="table">${manualAttentionSummary}</div>
+            </section>
+        </div>
+        <div class="grid two">
+            <section class="panel-embedded">
+                <h4>Failed Items</h4>
+                <div class="table">${failedItems}</div>
+            </section>
+            <section class="panel-embedded">
+                <h4>Temp-Done Backlog</h4>
+                <div class="table">${tempDoneItems}</div>
+            </section>
+        </div>
+        <section class="panel-embedded">
+            <h4>Assigned Aging</h4>
+            <div class="table">${assignedItems}</div>
+        </section>
+        <section class="panel-embedded">
+            <h4>Event Provenance</h4>
+            <div class="stats">
+                <div class="stat"><span>Recent total</span><strong>${escapeHtml(recentEventSources.total)}</strong></div>
+                <div class="stat"><span>Recommended</span><strong>${escapeHtml(recentEventSources.recommended)}</strong></div>
+                <div class="stat"><span>Manual</span><strong>${escapeHtml(recentEventSources.manual)}</strong></div>
+                <div class="stat"><span>System</span><strong>${escapeHtml(recentEventSources.system)}</strong></div>
+            </div>
+        </section>
+        <section>
+            <div class="title-row">
+                <h4>Recent Events</h4>
+                <div class="actions">
+                    <button type="button" data-event-source-filter="all">All Recent Events</button>
+                    <button type="button" data-event-source-filter="recommended">Recommended Events</button>
+                    <button type="button" data-event-source-filter="manual">Manual Events</button>
+                    <button type="button" data-event-source-filter="system">System Events</button>
+                </div>
+            </div>
+            <div class="table">${eventRows}</div>
+        </section>
+    `;
+
+    document.getElementById('redispatch-project-button').addEventListener('click', redispatchSelectedProject);
+    document.getElementById('verify-batch-button').addEventListener('click', runVerifyBatch);
+    document.getElementById('toggle-high-risk-items').addEventListener('click', () => {
+        state.highRiskOnly = !state.highRiskOnly;
+        renderProjectDetail(state.projectDetail);
+    });
+    detail.querySelectorAll('.work-item-requeue-trigger').forEach((node) => {
+        node.addEventListener('click', () => directorRequeueWorkItem(Number(node.dataset.workItemId)));
+    });
+    detail.querySelectorAll('.work-item-release-trigger').forEach((node) => {
+        node.addEventListener('click', () => directorReleaseWorkItem(Number(node.dataset.workItemId)));
+    });
+    detail.querySelectorAll('.work-item-verify-trigger').forEach((node) => {
+        node.addEventListener('click', () => directorVerifyWorkItem(Number(node.dataset.workItemId)));
+    });
+    detail.querySelectorAll('.work-item-recommended-trigger').forEach((node) => {
+        node.addEventListener('click', () => runRecommendedWorkItemAction(Number(node.dataset.workItemId), node.dataset.nextAction));
+    });
+    detail.querySelectorAll('.work-item-guidance-trigger').forEach((node) => {
+        node.addEventListener('click', () => focusRecommendedWorkItemAction(Number(node.dataset.workItemId), node.dataset.nextAction));
+    });
+    detail.querySelectorAll('.manual-attention-summary-trigger').forEach((node) => {
+        node.addEventListener('click', () => runRecommendedWorkItemAction(Number(node.dataset.workItemId), node.dataset.nextAction));
+    });
+    detail.querySelectorAll('.manual-attention-guidance-trigger').forEach((node) => {
+        node.addEventListener('click', () => focusRecommendedWorkItemAction(Number(node.dataset.workItemId), node.dataset.nextAction));
+    });
+    detail.querySelectorAll('[data-event-source-filter]').forEach((node) => {
+        node.addEventListener('click', () => {
+            state.recentEventSourceFilter = node.dataset.eventSourceFilter || 'all';
+            renderProjectDetail(state.projectDetail);
+        });
+    });
+}
+
+async function loadDashboard() {
+    const [dashboardResponse, shadowResponse, cutoverResponse, pilotResponse, pilotHistoryResponse, historyResponse, pilotTrendResponse, trendResponse, preflightResponse, preflightHistoryResponse] = await Promise.all([
+        fetch('/api/dashboard/director'),
+        fetch('/api/reports/shadow/summary'),
+        fetch('/api/reports/cutover/readiness'),
+        fetch('/api/reports/cutover/pilot-readiness'),
+        fetch('/api/reports/history?reportName=cutover_pilot_readiness&limit=6'),
+        fetch('/api/reports/history?reportName=cutover_readiness&limit=6'),
+        fetch('/api/reports/cutover/pilot-trend?limit=6'),
+        fetch('/api/reports/cutover/trend?limit=6'),
+        fetch('/api/reports/cutover/preflight?trendLimit=6'),
+        fetch('/api/reports/history?reportName=cutover_preflight&limit=6'),
+    ]);
+    const payload = await dashboardResponse.json();
+    const shadowPayload = await shadowResponse.json();
+    const cutoverPayload = await cutoverResponse.json();
+    const pilotPayload = await pilotResponse.json();
+    const pilotHistoryPayload = await pilotHistoryResponse.json();
+    const historyPayload = await historyResponse.json();
+    const pilotTrendPayload = await pilotTrendResponse.json();
+    const trendPayload = await trendResponse.json();
+    const preflightPayload = await preflightResponse.json();
+    const preflightHistoryPayload = await preflightHistoryResponse.json();
+    state.dashboard = payload;
+    renderDashboardStats(payload);
+    renderShadowSummary(shadowPayload);
+    renderCutoverReadiness(cutoverPayload);
+    renderCutoverPilotReadiness(pilotPayload);
+    renderCutoverPilotHistory(pilotHistoryPayload);
+    renderCutoverHistory(historyPayload);
+    renderCutoverPilotTrend(pilotTrendPayload);
+    renderCutoverTrend(trendPayload);
+    renderCutoverPreflight(preflightPayload);
+    renderCutoverPreflightHistory(preflightHistoryPayload);
+    renderCutoverPreflightChanges(preflightPayload);
+    renderProjectList(payload);
+    if (!state.selectedProjectId && payload.projects.length) {
+        await loadProjectDetail(payload.projects[0].id);
+        return;
+    }
+    if (state.selectedProjectId) {
+        await loadProjectDetail(state.selectedProjectId);
+    }
+}
+
+async function loadProjectDetail(projectId) {
+    state.selectedProjectId = projectId;
+    if (state.dashboard) {
+        renderProjectList(state.dashboard);
+    }
+    const response = await fetch(`/api/projects/${projectId}/director-detail`);
+    const payload = await response.json();
+    renderProjectDetail(payload);
+}
+
+async function redispatchSelectedProject() {
+    const statusNode = document.getElementById('project-recovery-status');
+    if (!state.selectedProjectId) {
+        statusNode.textContent = 'No project selected';
+        return;
+    }
+    statusNode.textContent = 'Redispatching...';
+    try {
+        const payload = await postJson(`/api/projects/${state.selectedProjectId}/dispatch`, {});
+        statusNode.textContent = `Redispatched ${payload.workItems.length} work item(s)`;
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function runVerifyBatch() {
+    const statusNode = document.getElementById('project-recovery-status');
+    statusNode.textContent = 'Verifying...';
+    try {
+        const payload = await postJson('/api/work-items/verify-batch', {});
+        statusNode.textContent = `Verified ${payload.verified}, requeued ${payload.requeued}, stale ${payload.stale}, escalated ${payload.escalated}`;
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function directorRequeueWorkItem(workItemId, source = 'manual_action') {
+    const statusNode = document.getElementById('project-recovery-status');
+    statusNode.textContent = `Requeueing ${workItemId}...`;
+    try {
+        const payload = await postJson(`/api/work-items/${workItemId}/director-requeue`, {
+            reason: 'director project cleanup',
+            source,
+        });
+        statusNode.textContent = `Work item ${payload.workItem.id} returned to ready`;
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function directorReleaseWorkItem(workItemId, source = 'manual_action') {
+    const statusNode = document.getElementById('project-recovery-status');
+    statusNode.textContent = `Releasing ${workItemId}...`;
+    try {
+        const payload = await postJson(`/api/work-items/${workItemId}/director-release`, {
+            reason: 'director item release',
+            source,
+        });
+        statusNode.textContent = `Work item ${payload.workItem.id} released to ready`;
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function directorVerifyWorkItem(workItemId, source = 'manual_action') {
+    const statusNode = document.getElementById('project-recovery-status');
+    statusNode.textContent = `Verifying ${workItemId}...`;
+    try {
+        const payload = await postJson(`/api/work-items/${workItemId}/director-verify`, { source });
+        statusNode.textContent = payload.verified
+            ? `Work item ${payload.workItem.id} marked verified`
+            : `Verification completed for ${payload.workItem.id}`;
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function submitScriptSignoff() {
+    const statusNode = document.getElementById('cutover-script-action-status');
+    statusNode.textContent = 'Saving...';
+    try {
+        await postJson('/api/reports/cutover/script-signoffs/update', {
+            scriptName: document.getElementById('script-signoff-name').value,
+            status: document.getElementById('script-signoff-status').value,
+            signedOffBy: document.getElementById('script-signoff-by').value,
+            notes: document.getElementById('script-signoff-notes').value,
+        });
+        statusNode.textContent = 'Saved';
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function submitRoleOwner() {
+    const statusNode = document.getElementById('cutover-role-action-status');
+    statusNode.textContent = 'Saving...';
+    try {
+        await postJson('/api/reports/cutover/roles/update', {
+            roleName: document.getElementById('cutover-role-name').value,
+            assignedTo: document.getElementById('cutover-role-owner').value,
+            changedBy: document.getElementById('cutover-role-by').value,
+            notes: document.getElementById('cutover-role-notes').value,
+        });
+        statusNode.textContent = 'Saved';
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function persistEvidence() {
+    const statusNode = document.getElementById('persist-evidence-status');
+    statusNode.textContent = 'Persisting...';
+    try {
+        const payload = await postJson('/api/reports/history/persist', {});
+        statusNode.textContent = `Stored ${payload.storedSnapshots.length} snapshot(s)`;
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function bootstrapGovernance() {
+    const statusNode = document.getElementById('persist-evidence-status');
+    const roleStatusNode = document.getElementById('cutover-role-action-status');
+    const scriptStatusNode = document.getElementById('cutover-script-action-status');
+    statusNode.textContent = 'Bootstrapping governance...';
+    try {
+        const [persistPayload, rolePayload, scriptPayload] = await Promise.all([
+            postJson('/api/reports/history/persist', {}),
+            postJson('/api/reports/cutover/roles/sync-missing', {
+                changedBy: document.getElementById('cutover-role-by').value,
+                notes: document.getElementById('cutover-role-notes').value || 'Synced missing role owners from defaults.',
+            }),
+            postJson('/api/reports/cutover/script-signoffs/sync-missing', {
+                changedBy: document.getElementById('script-signoff-by').value,
+                notes: document.getElementById('script-signoff-notes').value || 'Synced missing script sign-offs from required inventory.',
+            }),
+        ]);
+        statusNode.textContent = `Bootstrap complete: ${persistPayload.storedSnapshots.length} snapshot(s), ${rolePayload.syncedRoles.length} role(s), ${scriptPayload.syncedScripts.length} script(s)`;
+        roleStatusNode.textContent = rolePayload.syncedRoles.length
+            ? `Synced ${rolePayload.syncedRoles.length} role(s)`
+            : 'No missing env-backed roles to sync';
+        scriptStatusNode.textContent = scriptPayload.syncedScripts.length
+            ? `Synced ${scriptPayload.syncedScripts.length} script(s)`
+            : 'No missing required sign-offs to sync';
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function syncMissingRoleOwners() {
+    const statusNode = document.getElementById('cutover-role-action-status');
+    statusNode.textContent = 'Syncing...';
+    try {
+        const payload = await postJson('/api/reports/cutover/roles/sync-missing', {
+            changedBy: document.getElementById('cutover-role-by').value,
+            notes: document.getElementById('cutover-role-notes').value || 'Synced missing role owners from defaults.',
+        });
+        statusNode.textContent = payload.syncedRoles.length
+            ? `Synced ${payload.syncedRoles.length} role(s)`
+            : 'No missing env-backed roles to sync';
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+async function syncMissingScriptSignoffs() {
+    const statusNode = document.getElementById('cutover-script-action-status');
+    statusNode.textContent = 'Syncing...';
+    try {
+        const payload = await postJson('/api/reports/cutover/script-signoffs/sync-missing', {
+            changedBy: document.getElementById('script-signoff-by').value,
+            notes: document.getElementById('script-signoff-notes').value || 'Synced missing script sign-offs from required inventory.',
+        });
+        statusNode.textContent = payload.syncedScripts.length
+            ? `Synced ${payload.syncedScripts.length} script(s)`
+            : 'No missing required sign-offs to sync';
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
+document.getElementById('refresh-dashboard').addEventListener('click', loadDashboard);
+document.getElementById('bootstrap-governance').addEventListener('click', bootstrapGovernance);
+document.getElementById('persist-evidence').addEventListener('click', persistEvidence);
+document.getElementById('sync-missing-role-owners').addEventListener('click', syncMissingRoleOwners);
+document.getElementById('sync-missing-script-signoffs').addEventListener('click', syncMissingScriptSignoffs);
+document.getElementById('submit-script-signoff').addEventListener('click', submitScriptSignoff);
+document.getElementById('submit-role-owner').addEventListener('click', submitRoleOwner);
+loadDashboard();
+</script>
+{% endblock %}

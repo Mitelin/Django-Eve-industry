@@ -1,0 +1,281 @@
+{% extends "workforce/base.html" %}
+
+{% block title %}Worker Command{% endblock %}
+{% block nav_worker %}is-active{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="eyebrow">Worker Command</div>
+    <h2>Claim, execute, temp-done, verify.</h2>
+    <p>
+        This screen is intentionally direct. It gives a worker one active context, the next action, and enough project/job detail to operate without flipping back to Sheets.
+    </p>
+    <div class="field-row" style="margin-top: 22px; max-width: 520px;">
+        <input id="worker-user-id" type="number" min="1" placeholder="Enter worker user ID">
+        <button type="button" id="load-worker">Load</button>
+        <button type="button" id="claim-next">Claim next</button>
+    </div>
+</section>
+
+<section class="grid two">
+    <article class="panel">
+        <div class="title-row">
+            <h3>Active Task</h3>
+            <span class="pill" id="active-status-pill">Idle</span>
+        </div>
+        <div id="worker-banner"></div>
+        <div id="active-task" class="stack">
+            <div class="empty">Load a user to inspect the current assignment or claim the next item.</div>
+        </div>
+        <div class="actions" style="margin-top: 18px;">
+            <button type="button" id="mark-temp-done">Mark temp-done</button>
+            <button type="button" id="release-item">Release</button>
+        </div>
+    </article>
+    <article class="panel">
+        <div class="title-row">
+            <h3>Queue Preview</h3>
+            <button type="button" id="refresh-queue">Refresh queue</button>
+        </div>
+        <div id="queue-preview" class="list">
+            <div class="empty">Queue preview not loaded yet.</div>
+        </div>
+    </article>
+</section>
+
+<script>
+const workerState = {
+    userId: null,
+    active: null,
+};
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function formatDate(value) {
+    if (!value) {
+        return "n/a";
+    }
+    return new Date(value).toLocaleString();
+}
+
+function formatEventSourceLabel(source) {
+    if (source === 'recommended_action') {
+        return 'recommended';
+    }
+    if (source === 'manual_action') {
+        return 'manual';
+    }
+    if (!source) {
+        return 'system';
+    }
+    return source;
+}
+
+function setBanner(message, kind = 'info') {
+    const banner = document.getElementById('worker-banner');
+    if (!message) {
+        banner.innerHTML = '';
+        return;
+    }
+    const klass = kind === 'warn' ? 'banner' : 'table-row';
+    banner.innerHTML = `<div class="${klass}" style="margin-bottom: 16px;">${escapeHtml(message)}</div>`;
+}
+
+function updateStatusPill(label, tone = '') {
+    const pill = document.getElementById('active-status-pill');
+    pill.className = `pill ${tone}`.trim();
+    pill.textContent = label;
+}
+
+function renderActiveDetail(payload) {
+    const container = document.getElementById('active-task');
+    if (!payload.workItem) {
+        updateStatusPill('No active item');
+        container.innerHTML = '<div class="empty">No active work item. Claim next when the queue is ready.</div>';
+        return;
+    }
+
+    workerState.active = payload.workItem;
+    updateStatusPill(payload.workItem.status, payload.staleWarning ? 'warn' : 'good');
+    setBanner(payload.staleWarning ? 'Jobs sync is stale for this assignment. Confirm freshness before starting more work.' : 'Task context is fresh.', payload.staleWarning ? 'warn' : 'info');
+
+    const materials = payload.planMaterials.length
+        ? payload.planMaterials.map((item) => `
+            <div class="table-row">
+                <div class="title-row">
+                    <strong>Type ${escapeHtml(item.materialTypeId)}</strong>
+                    <span class="pill">Qty ${escapeHtml(item.quantityTotal)}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Level ${escapeHtml(item.level)}</span>
+                    <span>${item.isIntermediate ? 'Intermediate' : 'Input'}</span>
+                </div>
+            </div>
+        `).join('')
+        : '<div class="empty">No explicit material lines are attached to this plan job.</div>';
+
+    const events = payload.recentEvents.length
+        ? payload.recentEvents.map((event) => `
+            <div class="table-row">
+                <div class="title-row">
+                    <strong>${escapeHtml(event.eventType)}</strong>
+                    <span class="pill">${escapeHtml(formatEventSourceLabel(event.source))}</span>
+                    <span class="pill">${escapeHtml(formatDate(event.createdAt))}</span>
+                </div>
+                <div class="meta-row"><span>Actor ${escapeHtml(event.actorUserId ?? 'system')}</span></div>
+                ${event.summary ? `<div class="meta-row"><span>${escapeHtml(event.summary)}</span></div>` : ''}
+            </div>
+        `).join('')
+        : '<div class="empty">No events yet.</div>';
+
+    container.innerHTML = `
+        <div class="table-row">
+            <div class="title-row">
+                <strong>${escapeHtml(payload.project.name)}</strong>
+                <span class="pill">Priority ${escapeHtml(payload.project.priority)}</span>
+            </div>
+            <div class="meta-row">
+                <span>Work item ${escapeHtml(payload.workItem.id)}</span>
+                <span>Blueprint ${escapeHtml(payload.planJob?.blueprintTypeId ?? 'n/a')}</span>
+                <span>Runs ${escapeHtml(payload.planJob?.runs ?? 'n/a')}</span>
+            </div>
+        </div>
+        <section>
+            <h4>${escapeHtml(payload.instructions.title)}</h4>
+            <p>${escapeHtml(payload.instructions.summary)}</p>
+            <div class="list">
+                ${payload.instructions.steps.map((step, index) => `<div class="table-row"><strong>${index + 1}.</strong> ${escapeHtml(step)}</div>`).join('')}
+            </div>
+        </section>
+        <section>
+            <h4>Plan Materials</h4>
+            <div class="table">${materials}</div>
+        </section>
+        <section>
+            <h4>Recent Events</h4>
+            <div class="table">${events}</div>
+        </section>
+    `;
+}
+
+function renderQueue(payload) {
+    const container = document.getElementById('queue-preview');
+    if (!payload.workItems.length) {
+        container.innerHTML = '<div class="empty">No ready work items in queue.</div>';
+        return;
+    }
+    container.innerHTML = payload.workItems.map((item) => `
+        <div class="list-item">
+            <div class="title-row">
+                <strong>Work item ${escapeHtml(item.id)}</strong>
+                <span class="pill">Priority ${escapeHtml(item.priorityScore)}</span>
+            </div>
+            <div class="meta-row">
+                <span>Project ${escapeHtml(item.projectId)}</span>
+                <span>Plan job ${escapeHtml(item.planJobId)}</span>
+                <span>Status ${escapeHtml(item.status)}</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function loadQueue() {
+    const response = await fetch('/api/work-items/queue?limit=10');
+    const payload = await response.json();
+    renderQueue(payload);
+}
+
+async function loadActive() {
+    if (!workerState.userId) {
+        setBanner('Enter a worker user ID first.', 'warn');
+        return;
+    }
+    const response = await fetch(`/api/work-items/my-active-detail?userId=${workerState.userId}`);
+    const payload = await response.json();
+    renderActiveDetail(payload);
+}
+
+async function postJson(url, body) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+        throw new Error(payload.error || 'Request failed');
+    }
+    return payload;
+}
+
+document.getElementById('load-worker').addEventListener('click', async () => {
+    const userId = Number(document.getElementById('worker-user-id').value);
+    if (!userId) {
+        setBanner('Enter a valid worker user ID.', 'warn');
+        return;
+    }
+    workerState.userId = userId;
+    await loadActive();
+    await loadQueue();
+});
+
+document.getElementById('claim-next').addEventListener('click', async () => {
+    if (!workerState.userId) {
+        setBanner('Enter a worker user ID before claiming.', 'warn');
+        return;
+    }
+    try {
+        await postJson('/api/work-items/claim', { userId: workerState.userId });
+        await loadActive();
+        await loadQueue();
+    } catch (error) {
+        setBanner(error.message, 'warn');
+    }
+});
+
+document.getElementById('mark-temp-done').addEventListener('click', async () => {
+    if (!workerState.userId || !workerState.active) {
+        setBanner('Load an active task before marking temp-done.', 'warn');
+        return;
+    }
+    try {
+        await postJson(`/api/work-items/${workerState.active.id}/temp-done`, {
+            userId: workerState.userId,
+            idempotencyKey: `ui-${Date.now()}`,
+        });
+        await loadActive();
+        await loadQueue();
+    } catch (error) {
+        setBanner(error.message, 'warn');
+    }
+});
+
+document.getElementById('release-item').addEventListener('click', async () => {
+    if (!workerState.userId || !workerState.active) {
+        setBanner('Load an active task before releasing it.', 'warn');
+        return;
+    }
+    try {
+        await postJson(`/api/work-items/${workerState.active.id}/release`, {
+            userId: workerState.userId,
+            reason: 'released_from_worker_ui',
+        });
+        workerState.active = null;
+        await loadActive();
+        await loadQueue();
+    } catch (error) {
+        setBanner(error.message, 'warn');
+    }
+});
+
+document.getElementById('refresh-queue').addEventListener('click', loadQueue);
+loadQueue();
+</script>
+{% endblock %}
