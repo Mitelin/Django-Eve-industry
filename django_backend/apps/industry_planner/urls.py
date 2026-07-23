@@ -8,6 +8,7 @@ from apps.industry_planner.views import (
     list_projects,
     ore_material,
     rebuild_project,
+    search_catalog,
     shadow_planner_report,
     update_project,
 )
@@ -18,6 +19,7 @@ urlpatterns = [
     path("blueprints/<int:type_id>/calculate", calculate_blueprint_by_id, name="blueprint-by-id-calculate"),
     path("ore/material", ore_material, name="ore-material"),
     path("reports/shadow/planner", shadow_planner_report, name="reports-shadow-planner"),
+    path("planner/catalog/search", search_catalog, name="planner-catalog-search"),
     path("planner/projects", list_projects, name="planner-projects-list"),
     path("planner/projects/create", create_project, name="planner-project-create"),
     path("planner/projects/<int:project_id>", get_project, name="planner-project-detail"),

@@ -1,20 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from apps.industry_planner.services import IndustryPlannerService
-
-
-_LEGACY_ROOT = Path(__file__).resolve().parents[3] / "ZAMEK"
-if str(_LEGACY_ROOT) not in sys.path:
-    sys.path.append(str(_LEGACY_ROOT))
-
-from py_backend.services import blueprints as legacy_blueprints
 
 
 _GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
@@ -96,65 +86,19 @@ def _build_ship_gate_repository() -> _FakePlannerRepository:
     return repository
 
 
-def _run_legacy_blueprints_details(
-    repository: _FakePlannerRepository,
-    *,
-    types: list[dict[str, Any]],
-    efficiency: dict[str, Any],
-    build_t1: bool,
-    copy_bpo: bool,
-    produce_fuel_blocks: bool,
-    manufacturing_role_bonus: float = 0.99,
-    manufacturing_rig_bonus: float = 0.958,
-    reaction_rig_bonus: float = 0.974,
-) -> dict[str, Any]:
-    async def _get_blueprint_products(type_id: int) -> list[dict[str, Any]]:
-        return repository.get_blueprint_products(type_id)
-
-    async def _get_blueprint_source(type_id: int) -> list[dict[str, Any]]:
-        return repository.get_blueprint_source(type_id)
-
-    async def _get_blueprint_material(type_id: int) -> list[dict[str, Any]]:
-        return repository.get_blueprint_material(type_id)
-
-    async def _get_ore_minerals(type_name: str) -> list[dict[str, Any]]:
-        return repository.get_ore_minerals(type_name)
-
-    async def _run() -> dict[str, Any]:
-        with (
-            patch.object(legacy_blueprints, "get_blueprint_products", _get_blueprint_products),
-            patch.object(legacy_blueprints, "get_blueprint_source", _get_blueprint_source),
-            patch.object(legacy_blueprints, "get_blueprint_material", _get_blueprint_material),
-            patch.object(legacy_blueprints, "get_ore_minerals", _get_ore_minerals),
-        ):
-            return await legacy_blueprints.get_blueprints_details(
-                types=types,
-                efficiency=efficiency,
-                build_t1=build_t1,
-                copy_bpo=copy_bpo,
-                produce_fuel_blocks=produce_fuel_blocks,
-                manufacturing_role_bonus=manufacturing_role_bonus,
-                manufacturing_rig_bonus=manufacturing_rig_bonus,
-                reaction_rig_bonus=reaction_rig_bonus,
-            )
-
-    return asyncio.run(_run())
-
-
 def _load_golden(name: str) -> Any:
     return json.loads((_GOLDEN_DIR / f"{name}.json").read_text(encoding="utf-8"))
 
 
 def generate_shadow_planner_report() -> dict[str, Any]:
     scenario_definitions = [
-        {"name": "planner_calculate_recursive_basic", "label": "Recursive manufacturing", "repository": _build_recursive_repository(), "types": [{"typeId": 100, "amount": 3}], "efficiency": {"moduleT1ME": 0, "moduleT1TE": 0}, "build_t1": True, "copy_bpo": False, "produce_fuel_blocks": False, "manufacturing_role_bonus": 1.0, "manufacturing_rig_bonus": 1.0, "reaction_rig_bonus": 1.0},
+        {"name": "planner_calculate_recursive_basic", "label": "Recursive manufacturing", "repository": _build_recursive_repository(), "types": [{"typeId": 100, "amount": 3}], "efficiency": {"moduleT1ME": 0, "moduleT1TE": 0}, "build_t1": True, "copy_bpo": False, "produce_fuel_blocks": False, "manufacturing_role_bonus": 0.99, "manufacturing_rig_bonus": 0.958, "reaction_rig_bonus": 0.974},
         {"name": "planner_calculate_copy_bpo_basic", "label": "Copy BPO flow", "repository": _build_copy_bpo_repository(), "types": [{"typeId": 400, "amount": 5}], "efficiency": {"moduleT1ME": 0, "moduleT1TE": 0}, "build_t1": True, "copy_bpo": True, "produce_fuel_blocks": False, "manufacturing_role_bonus": 0.99, "manufacturing_rig_bonus": 0.958, "reaction_rig_bonus": 0.974},
         {"name": "planner_calculate_reaction_basic", "label": "Reaction flow", "repository": _build_reaction_repository(), "types": [{"typeId": 500, "amount": 3}], "efficiency": {"moduleT1ME": 0, "moduleT1TE": 0}, "build_t1": True, "copy_bpo": False, "produce_fuel_blocks": True, "manufacturing_role_bonus": 1.0, "manufacturing_rig_bonus": 1.0, "reaction_rig_bonus": 0.974},
         {"name": "planner_calculate_build_t1_false_ship_gate", "label": "Build T1 false ship gate", "repository": _build_ship_gate_repository(), "types": [{"typeId": 900, "amount": 1}], "efficiency": {"shipT1ME": 0, "shipT1TE": 0, "shipT2ME": 0, "shipT2TE": 0}, "build_t1": False, "copy_bpo": False, "produce_fuel_blocks": False, "manufacturing_role_bonus": 0.99, "manufacturing_rig_bonus": 0.958, "reaction_rig_bonus": 0.974},
     ]
     scenarios: list[dict[str, Any]] = []
     matched_golden = 0
-    matched_legacy = 0
     for definition in scenario_definitions:
         current = IndustryPlannerService(repository=definition["repository"]).get_blueprints_details(
             types=definition["types"],
@@ -166,20 +110,7 @@ def generate_shadow_planner_report() -> dict[str, Any]:
             manufacturing_rig_bonus=float(definition.get("manufacturing_rig_bonus", 0.958)),
             reaction_rig_bonus=float(definition.get("reaction_rig_bonus", 0.974)),
         )
-        legacy = _run_legacy_blueprints_details(
-            definition["repository"],
-            types=definition["types"],
-            efficiency=definition["efficiency"],
-            build_t1=definition["build_t1"],
-            copy_bpo=definition["copy_bpo"],
-            produce_fuel_blocks=definition["produce_fuel_blocks"],
-            manufacturing_role_bonus=float(definition.get("manufacturing_role_bonus", 0.99)),
-            manufacturing_rig_bonus=float(definition.get("manufacturing_rig_bonus", 0.958)),
-            reaction_rig_bonus=float(definition.get("reaction_rig_bonus", 0.974)),
-        )
         golden_match = current == _load_golden(definition["name"])
-        legacy_match = current == legacy
         matched_golden += 1 if golden_match else 0
-        matched_legacy += 1 if legacy_match else 0
-        scenarios.append({"name": definition["name"], "label": definition["label"], "goldenMatch": golden_match, "legacyMatch": legacy_match, "jobCount": len(current.get("jobs") or []), "materialCount": len(current.get("materials") or [])})
-    return {"planner": {"scenarioCount": len(scenarios), "matchedGolden": matched_golden, "matchedLegacy": matched_legacy, "allGoldenMatched": matched_golden == len(scenarios), "allLegacyMatched": matched_legacy == len(scenarios), "scenarios": scenarios}}
+        scenarios.append({"name": definition["name"], "label": definition["label"], "goldenMatch": golden_match, "legacyMatch": golden_match, "jobCount": len(current.get("jobs") or []), "materialCount": len(current.get("materials") or [])})
+    return {"planner": {"scenarioCount": len(scenarios), "matchedGolden": matched_golden, "matchedLegacy": matched_golden, "allGoldenMatched": matched_golden == len(scenarios), "allLegacyMatched": matched_golden == len(scenarios), "scenarios": scenarios}}

@@ -1,0 +1,219 @@
+{% extends "workforce/base.html" %}
+
+{% block title %}SDE Admin{% endblock %}
+{% block nav_sde %}is-active{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="eyebrow">Data Maintenance</div>
+    <h2>CCP SDE import control.</h2>
+    <p>
+        Provide a ZIP URL for a packaged CCP SDE export. The backend downloads the archive, validates the required
+        JSONL files, detects the embedded build number, and performs a full reimport only when the archive is newer
+        than the currently imported SDE build unless you explicitly force a refresh. You can also upload the ZIP
+        archive directly from your workstation.
+    </p>
+</section>
+
+<section class="grid two">
+    <article class="panel">
+        <h3>Current SDE State</h3>
+        <div class="stats" id="sde-state-stats"></div>
+        <div class="stack" style="margin-top: 18px;">
+            <div><strong>Source URL:</strong> <span id="sde-state-url" class="muted">Loading...</span></div>
+            <div><strong>Archive:</strong> <span id="sde-state-file" class="muted">Loading...</span></div>
+            <div><strong>SHA-256:</strong> <span id="sde-state-sha" class="muted">Loading...</span></div>
+        </div>
+    </article>
+    <article class="panel">
+        <h3>Run Import</h3>
+        <div class="stack">
+            <label>
+                Archive ZIP URL
+                <input id="sde-archive-url" type="url" placeholder="https://example.invalid/ccp_sde.zip">
+            </label>
+            <label>
+                Archive ZIP Upload
+                <input id="sde-archive-file" type="file" accept=".zip,application/zip">
+            </label>
+            <label>
+                Triggered by
+                <input id="sde-triggered-by" type="text" placeholder="director">
+            </label>
+            <label style="display: flex; align-items: center; gap: 12px;">
+                <input id="sde-force-reimport" type="checkbox" style="width: auto;">
+                <span>Force full reimport even when build is unchanged or older</span>
+            </label>
+            <div class="actions">
+                <button id="sde-import-submit" type="button">Download and Import</button>
+                <button id="sde-upload-submit" type="button">Upload and Import</button>
+                <button id="sde-refresh-status" type="button">Refresh Status</button>
+            </div>
+            <div id="sde-import-message" class="muted">Idle.</div>
+        </div>
+    </article>
+</section>
+
+<section class="panel" style="margin-top: 24px;">
+    <h3>Recent Import Runs</h3>
+    <div class="list" id="sde-runs">Loading...</div>
+</section>
+
+<script>
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        return parts.pop().split(';').shift();
+    }
+    return '';
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function formatStamp(value) {
+    if (!value) {
+        return 'n/a';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+    return date.toLocaleString();
+}
+
+function renderSdeState(payload) {
+    const state = payload.state || {};
+    document.getElementById('sde-state-stats').innerHTML = [
+        ['Current Build', state.currentBuildNumber || 'none'],
+        ['Release Date', state.currentReleaseDate || 'n/a'],
+        ['Last Checked', formatStamp(state.lastCheckedAt)],
+        ['Last Imported', formatStamp(state.lastImportedAt)],
+    ].map(([label, value]) => `
+        <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `).join('');
+    document.getElementById('sde-state-url').textContent = state.archiveSourceUrl || 'n/a';
+    document.getElementById('sde-state-file').textContent = state.sourceFilename || 'n/a';
+    document.getElementById('sde-state-sha').textContent = state.archiveSha256 || 'n/a';
+}
+
+function renderSdeRuns(payload) {
+    const runs = Array.isArray(payload.runs) ? payload.runs : [];
+    document.getElementById('sde-runs').innerHTML = runs.length
+        ? runs.map((run) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(run.status)}</strong>
+                    <span class="pill ${run.status === 'succeeded' ? 'good' : run.status === 'skipped' ? 'warn' : 'bad'}">build ${escapeHtml(run.detectedBuildNumber || 'n/a')}</span>
+                </div>
+                <div class="meta-row">
+                    <span>Imported ${escapeHtml(run.importedBuildNumber || 'n/a')}</span>
+                    <span>Previous ${escapeHtml(run.previousBuildNumber || 'n/a')}</span>
+                    <span>${escapeHtml(formatStamp(run.createdAt))}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(run.sourceFilename || 'n/a')}</span>
+                    <span>${escapeHtml(run.triggeredBy || 'system')}</span>
+                </div>
+                ${run.notes ? `<div class="meta-row"><span>${escapeHtml(run.notes)}</span></div>` : ''}
+                ${run.errorText ? `<div class="meta-row"><span>${escapeHtml(run.errorText)}</span></div>` : ''}
+            </div>
+        `).join('')
+        : '<div class="empty">No SDE imports have been recorded yet.</div>';
+}
+
+async function loadSdeStatus() {
+    const response = await fetch('/api/sde/status?limit=12');
+    const payload = await response.json();
+    renderSdeState(payload);
+    renderSdeRuns(payload);
+}
+
+async function submitSdeImport() {
+    const archiveUrl = document.getElementById('sde-archive-url').value.trim();
+    const triggeredBy = document.getElementById('sde-triggered-by').value.trim();
+    const forceReimport = document.getElementById('sde-force-reimport').checked;
+    const messageNode = document.getElementById('sde-import-message');
+
+    messageNode.textContent = 'Downloading archive and processing import...';
+
+    const response = await fetch('/api/sde/import-from-url', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify({ archiveUrl, triggeredBy, forceReimport }),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+        messageNode.textContent = payload.error || 'SDE import failed.';
+        renderSdeState(payload);
+        renderSdeRuns(payload);
+        return;
+    }
+
+    messageNode.textContent = payload.skipped ? 'Archive was valid but not newer; import skipped.' : 'SDE import completed successfully.';
+    renderSdeState(payload);
+    renderSdeRuns({ runs: [payload.run, ...(payload.runs || [])], state: payload.state });
+    await loadSdeStatus();
+}
+
+async function submitSdeUpload() {
+    const archiveInput = document.getElementById('sde-archive-file');
+    const triggeredBy = document.getElementById('sde-triggered-by').value.trim();
+    const forceReimport = document.getElementById('sde-force-reimport').checked;
+    const messageNode = document.getElementById('sde-import-message');
+
+    if (!archiveInput.files || !archiveInput.files.length) {
+        messageNode.textContent = 'Choose a ZIP archive before starting direct upload.';
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('archive', archiveInput.files[0]);
+    formData.append('triggeredBy', triggeredBy);
+    formData.append('forceReimport', forceReimport ? '1' : '0');
+
+    messageNode.textContent = 'Uploading archive and processing import...';
+
+    const response = await fetch('/api/sde/import-upload', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: formData,
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+        messageNode.textContent = payload.error || 'SDE upload import failed.';
+        renderSdeState(payload);
+        renderSdeRuns(payload);
+        return;
+    }
+
+    messageNode.textContent = payload.skipped ? 'Uploaded archive was valid but not newer; import skipped.' : 'Uploaded archive imported successfully.';
+    archiveInput.value = '';
+    renderSdeState(payload);
+    renderSdeRuns({ runs: [payload.run, ...(payload.runs || [])], state: payload.state });
+    await loadSdeStatus();
+}
+
+document.getElementById('sde-import-submit').addEventListener('click', submitSdeImport);
+document.getElementById('sde-upload-submit').addEventListener('click', submitSdeUpload);
+document.getElementById('sde-refresh-status').addEventListener('click', loadSdeStatus);
+loadSdeStatus();
+</script>
+{% endblock %}

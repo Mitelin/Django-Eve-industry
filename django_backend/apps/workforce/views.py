@@ -4,15 +4,19 @@ import json
 from typing import Any
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
+from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse
 from django.shortcuts import render
+from django.shortcuts import redirect
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.accounts.access import build_access_context, is_director, is_worker
 from apps.industry_planner.models import Project
+from apps.industry_planner.services import IndustryPlannerService
 from apps.workforce.models import WorkEvent, WorkItem
 from apps.workforce.services import (
     InvalidWorkItemTransition,
@@ -24,19 +28,53 @@ from apps.workforce.services import (
 
 
 workforce_service = WorkforceService()
+planner_service = IndustryPlannerService()
 
 
+@login_required
 def ui_home(request: HttpRequest):
-    return render(request, "workforce/ui_home.html")
+    if not is_worker(request.user):
+        return redirect("account-home")
+    return render(request, "workforce/ui_home.html", build_access_context(request.user))
 
 
 @ensure_csrf_cookie
+@login_required
 def director_screen(request: HttpRequest):
-    return render(request, "workforce/director_screen.html")
+    if not is_director(request.user):
+        return redirect("account-home")
+    return render(request, "workforce/director_console.html", build_access_context(request.user))
 
 
+@ensure_csrf_cookie
+@login_required
+def director_jobs_screen(request: HttpRequest):
+    if not is_director(request.user):
+        return redirect("account-home")
+    return render(request, "workforce/director_jobs.html", build_access_context(request.user))
+
+
+@ensure_csrf_cookie
+@login_required
+def jobs_board_screen(request: HttpRequest):
+    if not is_director(request.user):
+        return redirect("account-home")
+    return render(request, "workforce/jobs_board.html", build_access_context(request.user))
+
+
+@ensure_csrf_cookie
+@login_required
+def sde_admin_screen(request: HttpRequest):
+    if not is_director(request.user):
+        return redirect("account-home")
+    return render(request, "workforce/sde_admin.html", build_access_context(request.user))
+
+
+@login_required
 def worker_screen(request: HttpRequest):
-    return render(request, "workforce/worker_screen.html")
+    if not is_worker(request.user):
+        return redirect("account-home")
+    return render(request, "workforce/worker_screen.html", build_access_context(request.user))
 
 
 def _parse_json_body(request: HttpRequest) -> dict[str, Any]:
@@ -55,6 +93,47 @@ def _get_user_from_body(body: dict[str, Any]):
     if user_id is None:
         raise ValueError("userId is required")
     return get_object_or_404(get_user_model(), pk=int(user_id))
+
+
+def _auth_required_json() -> JsonResponse:
+    return JsonResponse(
+        {
+            "error": "Authentication required",
+            "loginUrl": reverse("eve-login-page"),
+        },
+        status=401,
+    )
+
+
+def _forbidden_json(message: str) -> JsonResponse:
+    return JsonResponse({"error": message}, status=403)
+
+
+def _get_authenticated_user(request: HttpRequest):
+    if not request.user.is_authenticated:
+        return _auth_required_json()
+    return request.user
+
+
+def _require_worker_api_user(request: HttpRequest):
+    user = _get_authenticated_user(request)
+    if isinstance(user, JsonResponse):
+        return user
+    if not is_worker(user):
+        return _forbidden_json("Worker access is required")
+    blocked = _enforce_pilot_user_allowed(user)
+    if blocked is not None:
+        return blocked
+    return user
+
+
+def _require_director_api_user(request: HttpRequest):
+    user = _get_authenticated_user(request)
+    if isinstance(user, JsonResponse):
+        return user
+    if not is_director(user):
+        return _forbidden_json("Director access is required")
+    return user
 
 
 def _enforce_assignment_write_enabled() -> JsonResponse | None:
@@ -107,6 +186,11 @@ def _serialize_work_item(work_item: WorkItem) -> dict[str, Any]:
 def _serialize_project_summary(project: Project) -> dict[str, Any]:
     progress = workforce_service.get_project_progress(project=project)
     freshness = workforce_service.get_project_jobs_freshness(project=project)
+    targets = list(project.targets.order_by("id"))
+    try:
+        type_name_map = planner_service.get_type_names([int(target.type_id) for target in targets])
+    except Exception:
+        type_name_map = {}
     return {
         "id": project.id,
         "name": project.name,
@@ -117,6 +201,16 @@ def _serialize_project_summary(project: Project) -> dict[str, Any]:
             "jobCount": project.plan_jobs.count(),
             "materialCount": project.plan_materials.count(),
         },
+        "targets": [
+            {
+                "id": target.id,
+                "typeId": target.type_id,
+                "typeName": type_name_map.get(int(target.type_id), ""),
+                "quantity": target.quantity,
+                "isFinalOutput": target.is_final_output,
+            }
+            for target in targets
+        ],
         "progress": {
             "total": progress.total,
             "ready": progress.ready,
@@ -137,9 +231,14 @@ def _serialize_project_summary(project: Project) -> dict[str, Any]:
 
 
 def _serialize_project_target(target) -> dict[str, Any]:
+    try:
+        type_name_map = planner_service.get_type_names([int(target.type_id)])
+    except Exception:
+        type_name_map = {}
     return {
         "id": target.id,
         "typeId": target.type_id,
+        "typeName": type_name_map.get(int(target.type_id), ""),
         "quantity": target.quantity,
         "isFinalOutput": target.is_final_output,
     }
@@ -583,18 +682,14 @@ def _build_work_item_instructions(work_item: WorkItem) -> dict[str, Any]:
 
 @require_POST
 def claim_work_item(request: HttpRequest) -> JsonResponse:
+    user = _require_worker_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     blocked = _enforce_assignment_write_enabled()
     if blocked is not None:
         return blocked
-    body = _parse_json_body(request)
     try:
-        user = _get_user_from_body(body)
-        blocked = _enforce_pilot_user_allowed(user)
-        if blocked is not None:
-            return blocked
         work_item = workforce_service.claim_next(user=user)
-    except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
     except NoAvailableWorkItem as exc:
         return JsonResponse({"error": str(exc)}, status=409)
     return JsonResponse({"workItem": _serialize_work_item(work_item)})
@@ -602,15 +697,14 @@ def claim_work_item(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 def temp_done_work_item(request: HttpRequest, work_item_id: int) -> JsonResponse:
+    user = _require_worker_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     blocked = _enforce_assignment_write_enabled()
     if blocked is not None:
         return blocked
     body = _parse_json_body(request)
     try:
-        user = _get_user_from_body(body)
-        blocked = _enforce_pilot_user_allowed(user)
-        if blocked is not None:
-            return blocked
         idempotency_key = body.get("idempotencyKey")
         if not idempotency_key:
             raise ValueError("idempotencyKey is required")
@@ -624,17 +718,13 @@ def temp_done_work_item(request: HttpRequest, work_item_id: int) -> JsonResponse
 
 @require_POST
 def release_work_item(request: HttpRequest, work_item_id: int) -> JsonResponse:
+    user = _require_worker_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     blocked = _enforce_assignment_write_enabled()
     if blocked is not None:
         return blocked
     body = _parse_json_body(request)
-    try:
-        user = _get_user_from_body(body)
-        blocked = _enforce_pilot_user_allowed(user)
-        if blocked is not None:
-            return blocked
-    except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
 
     work_item = get_object_or_404(WorkItem, pk=work_item_id)
     updated = workforce_service.release(work_item=work_item, actor=user, reason=body.get("reason") or "manual_release")
@@ -643,6 +733,9 @@ def release_work_item(request: HttpRequest, work_item_id: int) -> JsonResponse:
 
 @require_POST
 def director_requeue_work_item(request: HttpRequest, work_item_id: int) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     blocked = _enforce_assignment_write_enabled()
     if blocked is not None:
         return blocked
@@ -661,6 +754,9 @@ def director_requeue_work_item(request: HttpRequest, work_item_id: int) -> JsonR
 
 @require_POST
 def director_release_work_item(request: HttpRequest, work_item_id: int) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     blocked = _enforce_assignment_write_enabled()
     if blocked is not None:
         return blocked
@@ -679,6 +775,9 @@ def director_release_work_item(request: HttpRequest, work_item_id: int) -> JsonR
 
 @require_POST
 def director_verify_work_item(request: HttpRequest, work_item_id: int) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     body = _parse_json_body(request)
     work_item = get_object_or_404(WorkItem, pk=work_item_id)
     try:
@@ -697,26 +796,18 @@ def director_verify_work_item(request: HttpRequest, work_item_id: int) -> JsonRe
 
 @require_GET
 def my_active(request: HttpRequest) -> JsonResponse:
-    user_id = request.GET.get("userId")
-    if user_id is None:
-        return JsonResponse({"error": "userId is required"}, status=400)
-    user = get_object_or_404(get_user_model(), pk=int(user_id))
-    blocked = _enforce_pilot_user_allowed(user)
-    if blocked is not None:
-        return blocked
+    user = _require_worker_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     work_item = workforce_service.get_my_active(user=user)
     return JsonResponse({"workItem": _serialize_work_item(work_item) if work_item else None})
 
 
 @require_GET
 def my_active_detail(request: HttpRequest) -> JsonResponse:
-    user_id = request.GET.get("userId")
-    if user_id is None:
-        return JsonResponse({"error": "userId is required"}, status=400)
-    user = get_object_or_404(get_user_model(), pk=int(user_id))
-    blocked = _enforce_pilot_user_allowed(user)
-    if blocked is not None:
-        return blocked
+    user = _require_worker_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     work_item = workforce_service.get_my_active(user=user)
     if work_item is None:
         return JsonResponse({"workItem": None})
@@ -749,6 +840,9 @@ def my_active_detail(request: HttpRequest) -> JsonResponse:
 
 @require_GET
 def queue(request: HttpRequest) -> JsonResponse:
+    user = _require_worker_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     limit = int(request.GET.get("limit") or 20)
     work_items = workforce_service.get_queue(limit=limit)
     return JsonResponse({"workItems": [_serialize_work_item(work_item) for work_item in work_items]})
@@ -756,6 +850,9 @@ def queue(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 def dispatch_project(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     blocked = _enforce_assignment_write_enabled()
     if blocked is not None:
         return blocked
@@ -765,7 +862,10 @@ def dispatch_project(request: HttpRequest, project_id: int) -> JsonResponse:
 
 
 @require_GET
-def project_progress(_request: HttpRequest, project_id: int) -> JsonResponse:
+def project_progress(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     project = get_object_or_404(Project, pk=project_id)
     progress = workforce_service.get_project_progress(project=project)
     freshness = workforce_service.get_project_jobs_freshness(project=project)
@@ -791,13 +891,19 @@ def project_progress(_request: HttpRequest, project_id: int) -> JsonResponse:
 
 
 @require_POST
-def verify_batch(_request: HttpRequest) -> JsonResponse:
+def verify_batch(request: HttpRequest) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     result = workforce_service.verify_batch()
     return JsonResponse(result)
 
 
 @require_GET
-def director_dashboard(_request: HttpRequest) -> JsonResponse:
+def director_dashboard(request: HttpRequest) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     projects = list(Project.objects.order_by("-priority", "name"))
     ready_queue = workforce_service.get_queue(limit=10)
     temp_done_items = list(WorkItem.objects.filter(status="temp_done").order_by("created_at", "id")[:10])
@@ -842,7 +948,10 @@ def director_dashboard(_request: HttpRequest) -> JsonResponse:
 
 
 @require_GET
-def director_project_detail(_request: HttpRequest, project_id: int) -> JsonResponse:
+def director_project_detail(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     project = get_object_or_404(Project, pk=project_id)
     freshness = workforce_service.get_project_jobs_freshness(project=project)
     recent_events = _serialize_project_events(project)

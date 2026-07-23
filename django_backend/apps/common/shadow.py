@@ -143,7 +143,7 @@ def generate_shadow_summary_report() -> dict[str, Any]:
                 "scope": "planner",
                 "severity": "critical",
                 "code": "planner_parity_drift",
-                "message": "Planner shadow report detected parity drift against golden or legacy baselines.",
+                "message": "Planner shadow report detected drift against rewrite golden baselines.",
             }
         )
 

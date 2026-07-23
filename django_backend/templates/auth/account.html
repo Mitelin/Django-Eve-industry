@@ -1,0 +1,86 @@
+{% extends "workforce/base.html" %}
+
+{% block title %}Account{% endblock %}
+{% block nav_account %}is-active{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="eyebrow">Account Surface</div>
+    <h2>{{ request.user.first_name|default:request.user.username }}</h2>
+    <p>
+        This page is the safe default for authenticated users who do not yet have operational access. Link more EVE
+        characters here. Director and worker visibility is granted separately.
+    </p>
+    <div class="pill-row" style="margin-top: 18px;">
+        {% for label in role_labels %}
+        <span class="pill {% if label == 'director' %}good{% elif label == 'worker' %}warn{% endif %}">{{ label }}</span>
+        {% endfor %}
+    </div>
+    <div class="actions" style="margin-top: 20px;">
+        <a class="button-link" href="/auth/start/?mode=link">Add another EVE character</a>
+        {% if can_view_worker %}
+        <a class="button-link" href="/worker/">Open worker screen</a>
+        {% endif %}
+        {% if can_view_director %}
+        <a class="button-link" href="/director/">Open director screen</a>
+        {% endif %}
+    </div>
+    {% if error_message %}
+    <div class="banner" style="margin-top: 18px;">{{ error_message }}</div>
+    {% endif %}
+</section>
+
+<section class="grid two">
+    <article class="panel">
+        <h3>Linked characters</h3>
+        <div class="list">
+            {% for character in characters %}
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>{{ character.name }}</strong>
+                    <div class="actions">
+                        {% if character.is_main %}
+                        <span class="pill good">main</span>
+                        {% else %}
+                        <form method="post" action="/account/">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="set_main_character">
+                            <input type="hidden" name="characterId" value="{{ character.id }}">
+                            <button type="submit">Set as main</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="meta-row">
+                    <span>character {{ character.eve_character_id }}</span>
+                    <span>corporation {{ character.corporation_id }}</span>
+                    {% if character.alliance_id %}<span>alliance {{ character.alliance_id }}</span>{% endif %}
+                </div>
+                <div class="actions" style="margin-top: 12px;">
+                    <form method="post" action="/account/">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="remove_character">
+                        <input type="hidden" name="characterId" value="{{ character.id }}">
+                        <button type="submit">Remove from account</button>
+                    </form>
+                </div>
+            </div>
+            {% empty %}
+            <div class="empty">No linked characters yet.</div>
+            {% endfor %}
+        </div>
+    </article>
+    <article class="panel">
+        <h3>Role control</h3>
+        <p>
+            Director and worker permissions are assigned to the whole account. Character linking only controls which EVE identities can enter that account.
+        </p>
+        {% if can_manage_roles %}
+        <div class="actions">
+            <a class="button-link" href="/director/">Open director role control</a>
+            <a class="button-link" href="/admin/auth/user/">Open Django users</a>
+        </div>
+        {% endif %}
+    </article>
+</section>
+{% endblock %}

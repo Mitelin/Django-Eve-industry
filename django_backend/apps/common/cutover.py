@@ -5,6 +5,7 @@ from typing import Any
 from django.conf import settings
 
 from apps.common.ownership import get_cutover_role_summary
+from apps.common.rollback import get_rollback_evidence_summary
 from apps.common.signoffs import get_script_signoff_summary
 from apps.common.shadow import generate_shadow_summary_report
 
@@ -13,6 +14,7 @@ def generate_cutover_readiness_report() -> dict[str, Any]:
     shadow = generate_shadow_summary_report()
     role_summary = get_cutover_role_summary()
     script_signoffs = get_script_signoff_summary()
+    rollback_summary = get_rollback_evidence_summary()
     sync_failed = [
         incident for incident in shadow["incidents"] if incident["scope"] == "sync" and incident["severity"] == "critical"
     ]
@@ -31,6 +33,10 @@ def generate_cutover_readiness_report() -> dict[str, Any]:
         "compatibilityModeRetained": settings.CUTOVER_COMPATIBILITY_MODE,
         "assignmentWritesEnabled": not settings.CUTOVER_READ_ONLY_ASSIGNMENT,
         "rollbackReadOnlyAvailable": True,
+        "rollbackRunbookReviewed": bool((rollback_summary.get("status") or {}).get("runbookReviewed")),
+        "rollbackTestRecorded": bool((rollback_summary.get("status") or {}).get("rollbackTestRecorded")),
+        "rollbackEvidenceCurrent": bool((rollback_summary.get("status") or {}).get("withinPolicy")),
+        "rollbackEvidenceGateSatisfied": bool((rollback_summary.get("status") or {}).get("gateSatisfied")),
         "pilotUsersConfigured": bool(settings.CUTOVER_PILOT_USER_IDS),
         "pilotUserGuardEnabled": settings.CUTOVER_MODE != "assisted" or bool(settings.CUTOVER_PILOT_USER_IDS),
         "rolesAssigned": role_summary["allRequiredAssigned"],
@@ -57,6 +63,8 @@ def generate_cutover_readiness_report() -> dict[str, Any]:
         blockers.append("Assisted mode is active but no pilot users are configured.")
     if not checklist["rolesAssigned"]:
         blockers.append("Cutover and rollback ownership is incomplete.")
+    if settings.CUTOVER_MODE in {"assisted", "primary"} and not checklist["rollbackEvidenceGateSatisfied"]:
+        blockers.append("Rollback runbook review or rollback drill evidence is missing or stale.")
 
     return {
         "mode": settings.CUTOVER_MODE,
@@ -66,6 +74,7 @@ def generate_cutover_readiness_report() -> dict[str, Any]:
         "roles": roles,
         "roleAssignments": role_summary,
         "checklist": checklist,
+        "rollbackSummary": rollback_summary,
         "scriptSignoffs": script_signoffs,
         "blockers": blockers,
         "goNoGo": not blockers,

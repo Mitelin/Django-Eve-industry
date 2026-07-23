@@ -20,12 +20,14 @@ def _build_manual_action_item(
     guidance_steps: list[str],
     action_type: str = "manual",
     target_setting: str = "",
+    target_evidence_type: str = "",
 ) -> dict[str, Any]:
     return {
         "code": code,
         "label": label,
         "actionType": action_type,
         "targetSetting": target_setting,
+        "targetEvidenceType": target_evidence_type,
         "guidanceTitle": guidance_title,
         "guidanceSteps": guidance_steps,
     }
@@ -104,6 +106,24 @@ def _build_recommended_action_items(
                 target_setting="CUTOVER_PILOT_USER_IDS",
             )
         )
+    rollback_summary = readiness.get("rollbackSummary") or {}
+    rollback_status = rollback_summary.get("status") or {}
+    if readiness.get("mode") in {"assisted", "primary"} and not rollback_status.get("gateSatisfied", True):
+        actions.append(
+            _build_manual_action_item(
+                code="refresh_rollback_evidence",
+                label="Refresh rollback runbook review and rollback drill evidence before rollout continues.",
+                guidance_title="Refresh rollback evidence",
+                guidance_steps=[
+                    "Review the cutover runbook with the current incident commander and rollback approver, then record the runbook review date in the rollback evidence panel.",
+                    "Run or confirm the latest rollback drill and record the most recent successful rollback exercise date in the same panel.",
+                    "Keep both evidence dates within CUTOVER_ROLLBACK_EVIDENCE_MAX_AGE_DAYS and persist evidence again so preflight reflects the refreshed recovery posture.",
+                ],
+                action_type="focusRollbackEvidence",
+                target_setting="CUTOVER_RUNBOOK_REVIEWED_AT,CUTOVER_ROLLBACK_TESTED_AT",
+                target_evidence_type="runbook_review",
+            )
+        )
     if not checklist.get("syncHealthy"):
         actions.append(
             _build_manual_action_item(
@@ -174,6 +194,14 @@ def _find_action_item_by_label(action_items: list[dict[str, Any]], label: str) -
     return next((item for item in action_items if item.get("label") == label), None)
 
 
+def _find_first_action_item_by_codes(action_items: list[dict[str, Any]], codes: list[str]) -> dict[str, Any] | None:
+    for code in codes:
+        action_item = _find_action_item_by_code(action_items, code)
+        if action_item:
+            return action_item
+    return None
+
+
 def _match_action_item_for_blocker(blocker: str, action_items: list[dict[str, Any]]) -> dict[str, Any] | None:
     blocker_action_map = {
         "Sync posture has stale or failed feeds.": "resolve_sync_posture",
@@ -184,7 +212,20 @@ def _match_action_item_for_blocker(blocker: str, action_items: list[dict[str, An
         "Compatibility mode cannot be disabled until all critical scripts are signed off.": "validate_critical_scripts",
         "Assisted mode is active but no pilot users are configured.": "configure_pilot_users",
         "Cutover and rollback ownership is incomplete.": "assign_missing_roles",
+        "Rollback runbook review or rollback drill evidence is missing or stale.": "refresh_rollback_evidence",
     }
+    if blocker == "Pilot rollout evidence is not yet ready for assisted expansion.":
+        return _find_first_action_item_by_codes(
+            action_items,
+            [
+                "reduce_pilot_retry_pressure",
+                "clear_pilot_escalations",
+                "clear_pilot_verification_backlog",
+                "clear_pilot_failed_backlog",
+                "stabilize_pilot_manual_interventions",
+                "clear_workforce_blockers",
+            ],
+        )
     action_code = blocker_action_map.get(blocker)
     if not action_code:
         return None
@@ -199,6 +240,7 @@ def _build_change_detail_rows(
     actions_removed: list[str],
     workforce_provenance_delta: dict[str, int],
     workforce_provenance_warning: str,
+    rollback_change_rows: list[dict[str, Any]],
     recommended_action_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     return [
@@ -265,7 +307,71 @@ def _build_change_detail_rows(
                 or _find_action_item_by_code(recommended_action_items, "clear_workforce_blockers"),
             }
         ] if workforce_provenance_warning else []),
+        *rollback_change_rows,
     ]
+
+
+def _build_rollback_comparison_rows(
+    *,
+    current_rollback_summary: dict[str, Any],
+    previous_rollback_summary: dict[str, Any],
+    has_stored_preflight_baseline: bool,
+    recommended_action_items: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    current_status = current_rollback_summary.get("status") or {}
+    previous_status = previous_rollback_summary.get("status") or {}
+    current_runbook_reviewed_at = current_rollback_summary.get("runbookReviewedAt") or ""
+    previous_runbook_reviewed_at = previous_rollback_summary.get("runbookReviewedAt") or ""
+    current_rollback_tested_at = current_rollback_summary.get("rollbackTestedAt") or ""
+    previous_rollback_tested_at = previous_rollback_summary.get("rollbackTestedAt") or ""
+    rollback_action_item = _find_action_item_by_code(recommended_action_items, "refresh_rollback_evidence")
+
+    comparison = {
+        "previousGateSatisfied": bool(previous_status.get("gateSatisfied")) if has_stored_preflight_baseline else None,
+        "currentGateSatisfied": bool(current_status.get("gateSatisfied")),
+        "gateChanged": has_stored_preflight_baseline
+        and bool(previous_status.get("gateSatisfied")) != bool(current_status.get("gateSatisfied")),
+        "previousRunbookReviewedAt": previous_runbook_reviewed_at if has_stored_preflight_baseline else None,
+        "currentRunbookReviewedAt": current_runbook_reviewed_at,
+        "runbookChanged": has_stored_preflight_baseline and previous_runbook_reviewed_at != current_runbook_reviewed_at,
+        "previousRollbackTestedAt": previous_rollback_tested_at if has_stored_preflight_baseline else None,
+        "currentRollbackTestedAt": current_rollback_tested_at,
+        "rollbackTestChanged": has_stored_preflight_baseline and previous_rollback_tested_at != current_rollback_tested_at,
+    }
+
+    if not has_stored_preflight_baseline:
+        return comparison, []
+
+    rows: list[dict[str, Any]] = []
+    if comparison["gateChanged"]:
+        current_gate_satisfied = bool(current_status.get("gateSatisfied"))
+        rows.append(
+            {
+                "label": "Rollback gate changed",
+                "value": f"{'satisfied' if bool(previous_status.get('gateSatisfied')) else 'blocked'} -> {'satisfied' if current_gate_satisfied else 'blocked'}",
+                "tone": "good" if current_gate_satisfied else "bad",
+                "actionItem": None if current_gate_satisfied else rollback_action_item,
+            }
+        )
+    if comparison["runbookChanged"]:
+        rows.append(
+            {
+                "label": "Runbook evidence updated",
+                "value": f"{previous_runbook_reviewed_at or 'missing'} -> {current_runbook_reviewed_at or 'missing'}",
+                "tone": "good" if current_runbook_reviewed_at else "warn",
+                "actionItem": None if current_runbook_reviewed_at else rollback_action_item,
+            }
+        )
+    if comparison["rollbackTestChanged"]:
+        rows.append(
+            {
+                "label": "Rollback drill evidence updated",
+                "value": f"{previous_rollback_tested_at or 'missing'} -> {current_rollback_tested_at or 'missing'}",
+                "tone": "good" if current_rollback_tested_at else "warn",
+                "actionItem": None if current_rollback_tested_at else rollback_action_item,
+            }
+        )
+    return comparison, rows
 
 
 def _get_workforce_provenance_from_readiness(readiness: dict[str, Any]) -> dict[str, int]:
@@ -310,6 +416,16 @@ def _build_workforce_provenance_comparison(
     return workforce_provenance_delta, workforce_provenance_warning
 
 
+def _build_preflight_relevant_pilot_blockers(pilot: dict[str, Any], *, mode: str) -> list[str]:
+    if mode != "assisted":
+        return []
+    if (pilot.get("pilotStage") or "pre_pilot") == "pre_pilot":
+        return []
+    if pilot.get("pilotExpansionGoNoGo"):
+        return []
+    return ["Pilot rollout evidence is not yet ready for assisted expansion."]
+
+
 def _snapshot_summary(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
     if not snapshot:
         return None
@@ -319,14 +435,18 @@ def _snapshot_summary(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
 def _build_changes_vs_stored_preflight(
     *,
     readiness: dict[str, Any],
+    effective_go_no_go: bool,
+    preflight_blockers: list[str],
     recommended_actions: list[str],
     recommended_action_items: list[dict[str, Any]],
     latest_preflight_payload: dict[str, Any],
 ) -> dict[str, Any]:
     previous_readiness = latest_preflight_payload.get("readiness") or {}
     previous_current = latest_preflight_payload.get("current") or {}
-    previous_blockers = list(previous_readiness.get("blockers") or [])
-    current_blockers = list(readiness.get("blockers") or [])
+    current_rollback_summary = readiness.get("rollbackSummary") or {}
+    previous_rollback_summary = latest_preflight_payload.get("rollbackSummary") or previous_readiness.get("rollbackSummary") or {}
+    previous_blockers = list(latest_preflight_payload.get("preflightBlockers") or previous_readiness.get("blockers") or [])
+    current_blockers = list(preflight_blockers)
     previous_actions = list(latest_preflight_payload.get("recommendedActions") or [])
     current_workforce_provenance = _get_workforce_provenance_from_readiness(readiness)
     previous_workforce_provenance = previous_current.get("workforceProvenance") or {
@@ -344,13 +464,21 @@ def _build_changes_vs_stored_preflight(
         previous_workforce_provenance=previous_workforce_provenance,
         has_stored_preflight_baseline=bool(latest_preflight_payload),
     )
+    rollback_comparison, rollback_change_rows = _build_rollback_comparison_rows(
+        current_rollback_summary=current_rollback_summary,
+        previous_rollback_summary=previous_rollback_summary,
+        has_stored_preflight_baseline=bool(latest_preflight_payload),
+        recommended_action_items=recommended_action_items,
+    )
 
     return {
         "hasStoredBaseline": bool(latest_preflight_payload),
-        "previousGoNoGo": previous_readiness.get("goNoGo") if latest_preflight_payload else None,
-        "currentGoNoGo": bool(readiness.get("goNoGo")),
+        "previousGoNoGo": latest_preflight_payload.get("effectiveGoNoGo", previous_readiness.get("goNoGo"))
+        if latest_preflight_payload
+        else None,
+        "currentGoNoGo": effective_go_no_go,
         "goNoGoChanged": bool(latest_preflight_payload)
-        and previous_readiness.get("goNoGo") != bool(readiness.get("goNoGo")),
+        and latest_preflight_payload.get("effectiveGoNoGo", previous_readiness.get("goNoGo")) != effective_go_no_go,
         "previousMode": previous_readiness.get("mode") if latest_preflight_payload else None,
         "currentMode": readiness.get("mode"),
         "modeChanged": bool(latest_preflight_payload)
@@ -359,6 +487,7 @@ def _build_changes_vs_stored_preflight(
         "blockersRemoved": blockers_removed,
         "actionsAdded": actions_added,
         "actionsRemoved": actions_removed,
+        "rollbackComparison": rollback_comparison,
         "previousWorkforceProvenance": previous_workforce_provenance if latest_preflight_payload else None,
         "currentWorkforceProvenance": current_workforce_provenance,
         "workforceProvenanceDelta": workforce_provenance_delta,
@@ -370,12 +499,13 @@ def _build_changes_vs_stored_preflight(
             actions_removed=actions_removed,
             workforce_provenance_delta=workforce_provenance_delta,
             workforce_provenance_warning=workforce_provenance_warning,
+            rollback_change_rows=rollback_change_rows,
             recommended_action_items=recommended_action_items,
         ),
     }
 
 
-def generate_cutover_preflight_report(*, persist: bool = False, trend_limit: int = 7) -> dict[str, Any]:
+def generate_cutover_preflight_report(*, persist: bool = False, trend_limit: int = 7, include_pilot: bool = True) -> dict[str, Any]:
     stored = persist_daily_report_snapshots() if persist else []
     readiness = generate_cutover_readiness_report()
     trend = list_cutover_readiness_trend(limit=trend_limit)
@@ -420,12 +550,54 @@ def generate_cutover_preflight_report(*, persist: bool = False, trend_limit: int
     preflight_blockers = list(readiness.get("blockers") or [])
     if readiness.get("mode") in {"assisted", "primary"} and workforce_provenance_warning:
         preflight_blockers.append("Manual workforce interventions are rising above recommendation-driven handling.")
-    effective_go_no_go = not preflight_blockers
+    base_effective_go_no_go = not preflight_blockers
+
+    pilot = {
+        "pilotStage": "pre_pilot",
+        "pilotStartGoNoGo": True,
+        "pilotExpansionGoNoGo": True,
+        "pilotUserIds": [],
+        "operationalSummary": {"incidentCount": 0},
+        "policySummary": {"status": {"withinPolicy": True}},
+        "recommendedActions": recommended_actions,
+        "recommendedActionItems": recommended_action_items,
+    }
+    pilot_preflight_blockers: list[str] = []
+    effective_go_no_go = base_effective_go_no_go
+
+    if include_pilot:
+        pilot_payload = {
+            "readiness": readiness,
+            "effectiveGoNoGo": base_effective_go_no_go,
+            "preflightBlockers": list(preflight_blockers),
+            "recommendedActions": recommended_actions,
+            "recommendedActionItems": recommended_action_items,
+        }
+
+        from apps.common.pilot import build_cutover_pilot_readiness_report
+
+        pilot = build_cutover_pilot_readiness_report(preflight=pilot_payload)
+        pilot_preflight_blockers = _build_preflight_relevant_pilot_blockers(pilot, mode=str(readiness.get("mode") or ""))
+        preflight_blockers.extend(pilot_preflight_blockers)
+        effective_go_no_go = not preflight_blockers
+        recommended_action_items = list(pilot.get("recommendedActionItems") or recommended_action_items)
+        recommended_actions = list(pilot.get("recommendedActions") or recommended_actions)
 
     payload = {
         "readiness": readiness,
         "effectiveGoNoGo": effective_go_no_go,
         "preflightBlockers": preflight_blockers,
+        "rollbackSummary": readiness.get("rollbackSummary") or {},
+        "pilot": {
+            "pilotStage": pilot.get("pilotStage") or "pre_pilot",
+            "pilotStartGoNoGo": bool(pilot.get("pilotStartGoNoGo")),
+            "pilotExpansionGoNoGo": bool(pilot.get("pilotExpansionGoNoGo")),
+            "pilotUserCount": len(pilot.get("pilotUserIds") or []),
+            "incidentCount": int((pilot.get("operationalSummary") or {}).get("incidentCount") or 0),
+            "policyBlocked": not bool(((pilot.get("policySummary") or {}).get("status") or {}).get("withinPolicy", True)),
+            "preflightBlockers": pilot_preflight_blockers,
+            "recommendedActions": recommended_actions,
+        },
         "current": {
             "assignedRoles": current_assigned_roles,
             "requiredRoles": current_required_roles,
@@ -434,6 +606,10 @@ def generate_cutover_preflight_report(*, persist: bool = False, trend_limit: int
             "blockerCount": current_blocker_count,
             "preflightBlockerCount": len(preflight_blockers),
             "incidentCount": current_incident_count,
+            "pilotStage": pilot.get("pilotStage") or "pre_pilot",
+            "pilotExpansionGoNoGo": bool(pilot.get("pilotExpansionGoNoGo")),
+            "pilotPolicyBlocked": not bool(((pilot.get("policySummary") or {}).get("status") or {}).get("withinPolicy", True)),
+            "pilotIncidentCount": int((pilot.get("operationalSummary") or {}).get("incidentCount") or 0),
             "workforceProvenance": workforce_provenance,
         },
         "latestStoredSnapshot": _snapshot_summary(latest_snapshot_item),
@@ -444,6 +620,8 @@ def generate_cutover_preflight_report(*, persist: bool = False, trend_limit: int
         "recommendedActionItems": recommended_action_items,
         "changesVsStoredPreflight": _build_changes_vs_stored_preflight(
             readiness=readiness,
+            effective_go_no_go=effective_go_no_go,
+            preflight_blockers=preflight_blockers,
             recommended_actions=recommended_actions,
             recommended_action_items=recommended_action_items,
             latest_preflight_payload=latest_preflight_payload,

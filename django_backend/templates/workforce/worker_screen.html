@@ -11,8 +11,8 @@
         This screen is intentionally direct. It gives a worker one active context, the next action, and enough project/job detail to operate without flipping back to Sheets.
     </p>
     <div class="field-row" style="margin-top: 22px; max-width: 520px;">
-        <input id="worker-user-id" type="number" min="1" placeholder="Enter worker user ID">
-        <button type="button" id="load-worker">Load</button>
+        <span class="pill good">Signed in as {{ request.user.get_username }}</span>
+        <button type="button" id="load-worker">Load active task</button>
         <button type="button" id="claim-next">Claim next</button>
     </div>
 </section>
@@ -25,7 +25,7 @@
         </div>
         <div id="worker-banner"></div>
         <div id="active-task" class="stack">
-            <div class="empty">Load a user to inspect the current assignment or claim the next item.</div>
+            <div class="empty">Load your current assignment or claim the next item.</div>
         </div>
         <div class="actions" style="margin-top: 18px;">
             <button type="button" id="mark-temp-done">Mark temp-done</button>
@@ -45,7 +45,6 @@
 
 <script>
 const workerState = {
-    userId: null,
     active: null,
 };
 
@@ -193,11 +192,11 @@ async function loadQueue() {
 }
 
 async function loadActive() {
-    if (!workerState.userId) {
-        setBanner('Enter a worker user ID first.', 'warn');
-        return;
+    const response = await fetch('/api/work-items/my-active-detail');
+    if (response.status === 401 || response.status === 403) {
+        const payload = await response.json();
+        throw new Error(payload.error || 'Access denied');
     }
-    const response = await fetch(`/api/work-items/my-active-detail?userId=${workerState.userId}`);
     const payload = await response.json();
     renderActiveDetail(payload);
 }
@@ -216,23 +215,17 @@ async function postJson(url, body) {
 }
 
 document.getElementById('load-worker').addEventListener('click', async () => {
-    const userId = Number(document.getElementById('worker-user-id').value);
-    if (!userId) {
-        setBanner('Enter a valid worker user ID.', 'warn');
-        return;
+    try {
+        await loadActive();
+        await loadQueue();
+    } catch (error) {
+        setBanner(error.message, 'warn');
     }
-    workerState.userId = userId;
-    await loadActive();
-    await loadQueue();
 });
 
 document.getElementById('claim-next').addEventListener('click', async () => {
-    if (!workerState.userId) {
-        setBanner('Enter a worker user ID before claiming.', 'warn');
-        return;
-    }
     try {
-        await postJson('/api/work-items/claim', { userId: workerState.userId });
+        await postJson('/api/work-items/claim', {});
         await loadActive();
         await loadQueue();
     } catch (error) {
@@ -241,13 +234,12 @@ document.getElementById('claim-next').addEventListener('click', async () => {
 });
 
 document.getElementById('mark-temp-done').addEventListener('click', async () => {
-    if (!workerState.userId || !workerState.active) {
+    if (!workerState.active) {
         setBanner('Load an active task before marking temp-done.', 'warn');
         return;
     }
     try {
         await postJson(`/api/work-items/${workerState.active.id}/temp-done`, {
-            userId: workerState.userId,
             idempotencyKey: `ui-${Date.now()}`,
         });
         await loadActive();
@@ -258,13 +250,12 @@ document.getElementById('mark-temp-done').addEventListener('click', async () => 
 });
 
 document.getElementById('release-item').addEventListener('click', async () => {
-    if (!workerState.userId || !workerState.active) {
+    if (!workerState.active) {
         setBanner('Load an active task before releasing it.', 'warn');
         return;
     }
     try {
         await postJson(`/api/work-items/${workerState.active.id}/release`, {
-            userId: workerState.userId,
             reason: 'released_from_worker_ui',
         });
         workerState.active = null;

@@ -174,6 +174,7 @@ class WorkforceService:
                 "DIRECTOR_REQUEUED",
                 None,
                 {
+                    "assignedUserId": previous_assigned_to_id,
                     "reason": reason,
                     "source": source,
                     "previousStatus": previous_status,
@@ -199,6 +200,7 @@ class WorkforceService:
                 "DIRECTOR_RELEASED",
                 None,
                 {
+                    "assignedUserId": previous_assigned_to_id,
                     "reason": reason,
                     "source": source,
                     "previousAssignedToUserId": previous_assigned_to_id,
@@ -378,16 +380,27 @@ class WorkforceService:
             locked = WorkItem.objects.select_for_update().get(pk=work_item.pk)
             if locked.status != "temp_done":
                 return
+            assigned_user_id = locked.assigned_to_id
             locked.status = "failed"
             locked.version += 1
             locked.save(update_fields=["status", "version", "updated_at"])
-            self._emit_event(locked, "VERIFY_MISS", None, {"failedAt": now.isoformat(), "source": source})
+            self._emit_event(
+                locked,
+                "VERIFY_MISS",
+                None,
+                {"failedAt": now.isoformat(), "source": source, "assignedUserId": assigned_user_id},
+            )
             if int(locked.attempt or 0) >= self.max_attempts:
                 self._emit_event(
                     locked,
                     "ESCALATED",
                     None,
-                    {"reason": "retry_cap_reached", "attempt": locked.attempt, "source": source},
+                    {
+                        "reason": "retry_cap_reached",
+                        "attempt": locked.attempt,
+                        "source": source,
+                        "assignedUserId": assigned_user_id,
+                    },
                 )
                 return
             locked.status = "ready"
@@ -395,7 +408,12 @@ class WorkforceService:
             locked.locked_until = None
             locked.version += 1
             locked.save(update_fields=["status", "assigned_to", "locked_until", "version", "updated_at"])
-            self._emit_event(locked, "REQUEUED", None, {"reason": "verify_miss", "source": source})
+            self._emit_event(
+                locked,
+                "REQUEUED",
+                None,
+                {"reason": "verify_miss", "source": source, "assignedUserId": assigned_user_id},
+            )
 
     def _ensure_fresh_job_sync(self, work_item: WorkItem) -> None:
         corporation_id = self._get_assigned_corporation_id(work_item)
@@ -447,7 +465,12 @@ class WorkforceService:
 
     @staticmethod
     def _emit_event(work_item: WorkItem, event_type: str, actor: Any, details: dict[str, Any]) -> WorkEvent:
-        return WorkEvent.objects.create(work_item=work_item, event_type=event_type, actor=actor, details=details)
+        event_details = dict(details)
+        event_details.setdefault("actorUserId", getattr(actor, "id", None))
+        event_details.setdefault("assignedUserId", work_item.assigned_to_id)
+        event_details.setdefault("projectId", work_item.project_id)
+        event_details.setdefault("planJobId", work_item.plan_job_id)
+        return WorkEvent.objects.create(work_item=work_item, event_type=event_type, actor=actor, details=event_details)
 
     @staticmethod
     def _parse_payload_datetime(value: Any):

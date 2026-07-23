@@ -72,14 +72,28 @@ POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 ADVISORY_LOCK_NAMESPACE = os.getenv("DJANGO_ADVISORY_LOCK_NAMESPACE", "django-eve-industry")
 EVE_API_BASE = os.getenv("EVE_API_BASE", "https://esi.evetech.net/latest")
+EVE_AUTHORIZATION_URL = os.getenv("EVE_AUTHORIZATION_URL", "https://login.eveonline.com/v2/oauth/authorize")
 EVE_TOKEN_API = os.getenv("EVE_TOKEN_API", "https://login.eveonline.com/v2/oauth/token")
 EVE_CLIENT_ID = os.getenv("EVE_CLIENT_ID", "")
 EVE_CLIENT_SECRET = os.getenv("EVE_CLIENT_SECRET", "")
+EVE_LOGIN_SCOPES = tuple(
+    value.strip()
+    for value in os.getenv("EVE_LOGIN_SCOPES", "").split(",")
+    if value.strip()
+)
 EVE_CORPORATION_ID = int(os.getenv("EVE_CORPORATION_ID", "0") or "0")
 ESI_TOKEN_ENCRYPTION_KEY = os.getenv("ESI_TOKEN_ENCRYPTION_KEY", SECRET_KEY)
 CUTOVER_MODE = os.getenv("CUTOVER_MODE", "shadow").strip().lower() or "shadow"
 CUTOVER_READ_ONLY_ASSIGNMENT = os.getenv("CUTOVER_READ_ONLY_ASSIGNMENT", "0") == "1"
 CUTOVER_COMPATIBILITY_MODE = os.getenv("CUTOVER_COMPATIBILITY_MODE", "1") == "1"
+CUTOVER_PILOT_VERIFICATION_SLA_MINUTES = int(os.getenv("CUTOVER_PILOT_VERIFICATION_SLA_MINUTES", "30") or "30")
+CUTOVER_PILOT_MAX_VERIFY_MISS_RATE_PERCENT = float(
+    os.getenv("CUTOVER_PILOT_MAX_VERIFY_MISS_RATE_PERCENT", "0") or "0"
+)
+CUTOVER_PILOT_MAX_ESCALATED_COUNT = int(os.getenv("CUTOVER_PILOT_MAX_ESCALATED_COUNT", "0") or "0")
+CUTOVER_PILOT_MAX_MANUAL_INTERVENTION_COUNT = int(
+    os.getenv("CUTOVER_PILOT_MAX_MANUAL_INTERVENTION_COUNT", "0") or "0"
+)
 CUTOVER_PILOT_USER_IDS = [
     int(value.strip())
     for value in os.getenv("CUTOVER_PILOT_USER_IDS", "").split(",")
@@ -91,6 +105,10 @@ CUTOVER_BACKEND_OWNER = os.getenv("CUTOVER_BACKEND_OWNER", "")
 CUTOVER_DATA_OWNER = os.getenv("CUTOVER_DATA_OWNER", "")
 CUTOVER_DIRECTOR_REPRESENTATIVE = os.getenv("CUTOVER_DIRECTOR_REPRESENTATIVE", "")
 CUTOVER_ROLLBACK_APPROVER = os.getenv("CUTOVER_ROLLBACK_APPROVER", "")
+CUTOVER_ENFORCE_ROLLBACK_EVIDENCE = os.getenv("CUTOVER_ENFORCE_ROLLBACK_EVIDENCE", "0") == "1"
+CUTOVER_RUNBOOK_REVIEWED_AT = os.getenv("CUTOVER_RUNBOOK_REVIEWED_AT", "").strip()
+CUTOVER_ROLLBACK_TESTED_AT = os.getenv("CUTOVER_ROLLBACK_TESTED_AT", "").strip()
+CUTOVER_ROLLBACK_EVIDENCE_MAX_AGE_DAYS = int(os.getenv("CUTOVER_ROLLBACK_EVIDENCE_MAX_AGE_DAYS", "14") or "14")
 CUTOVER_REQUIRED_SCRIPT_SIGNOFFS = [
     value.strip()
     for value in os.getenv(
@@ -143,6 +161,8 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+LOGIN_URL = "/auth/login/"
+LOGIN_REDIRECT_URL = "/"
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [

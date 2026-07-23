@@ -359,9 +359,26 @@
                 <p class="muted">Phase 7 operational UI over verified planner and workforce APIs.</p>
             </div>
             <nav class="nav">
+                {% if request.user.is_authenticated %}
+                {% if can_view_worker %}
                 <a href="/" class="chip {% block nav_home %}{% endblock %}">Home</a>
+                {% endif %}
+                {% if can_view_director %}
                 <a href="/director/" class="chip {% block nav_director %}{% endblock %}">Director</a>
+                <a href="/director/jobs/" class="chip {% block nav_director_jobs %}{% endblock %}">Production Jobs</a>
+                <a href="/jobs/" class="chip {% block nav_jobs_board %}{% endblock %}">JOBS</a>
+                {% endif %}
+                {% if can_view_sde %}
+                <a href="/sde/" class="chip {% block nav_sde %}{% endblock %}">SDE Admin</a>
+                {% endif %}
+                {% if can_view_worker %}
                 <a href="/worker/" class="chip {% block nav_worker %}{% endblock %}">Worker</a>
+                {% endif %}
+                <a href="/account/" class="chip {% block nav_account %}{% endblock %}">Account</a>
+                <a href="/auth/logout/" class="chip">Logout</a>
+                {% else %}
+                <a href="/auth/login/" class="chip {% block nav_login %}{% endblock %}">EVE Login</a>
+                {% endif %}
             </nav>
         </div>
         {% block content %}{% endblock %}

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 import json
+from pathlib import Path
+import subprocess
 from typing import Any
 
+from django.conf import settings
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -13,16 +17,78 @@ from apps.common.history import (
     list_recent_report_snapshots,
     persist_all_report_snapshots,
 )
-from apps.common.models import ScriptSignoff
+from apps.common.models import RollbackEvidence, ScriptSignoff
 from apps.common.ownership import (
     get_required_cutover_roles,
     sync_missing_cutover_role_assignments,
     update_cutover_role_assignment,
 )
+from apps.common.phase9_exit import generate_phase9_exit_report
+from apps.common.phase10_prep import generate_phase10_prep_report
 from apps.common.pilot import generate_cutover_pilot_readiness_report
 from apps.common.preflight import generate_cutover_preflight_report
+from apps.common.rollback import get_rollback_evidence_summary, update_rollback_evidence
+from apps.common.sde_import import (
+    SdeArchiveValidationError,
+    SdeImportError,
+    get_sde_import_summary,
+    import_sde_from_url,
+    import_sde_from_upload,
+)
 from apps.common.signoffs import get_script_signoff_summary, sync_missing_required_script_signoffs, update_script_signoff
 from apps.common.shadow import generate_shadow_summary_report
+
+
+PROCESS_STARTED_AT = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
+
+
+def _read_runtime_version() -> dict[str, str | bool]:
+    repo_root = Path(settings.BASE_DIR).parent
+
+    def _git(*args: str) -> str:
+        return subprocess.check_output(
+            ["git", "-C", str(repo_root), *args],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+
+    try:
+        return {
+            "source": "git",
+            "commit": _git("rev-parse", "HEAD"),
+            "shortCommit": _git("rev-parse", "--short", "HEAD"),
+            "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
+            "dirty": bool(_git("status", "--porcelain")),
+        }
+    except (OSError, subprocess.SubprocessError):
+        return {
+            "source": "unknown",
+            "commit": "unknown",
+            "shortCommit": "unknown",
+            "branch": "unknown",
+            "dirty": False,
+        }
+
+
+@require_GET
+def runtime_version(_request: HttpRequest):
+    return JsonResponse(
+        {
+            **_read_runtime_version(),
+            "processStartedAt": PROCESS_STARTED_AT,
+            "schedulerEnabled": False,
+            "schedulerRunning": False,
+            "activityScheduler": {
+                "running": False,
+                "lastStartedAt": None,
+                "lastFinishedAt": None,
+                "lastSuccessAt": None,
+                "lastResultCount": None,
+                "lastError": None,
+            },
+            "nextActivityRunAt": None,
+        }
+    )
 
 
 def _parse_json_body(request: HttpRequest) -> dict[str, Any]:
@@ -44,6 +110,16 @@ def cutover_readiness_report(_request):
 @require_GET
 def cutover_pilot_readiness_report(_request):
     return JsonResponse(generate_cutover_pilot_readiness_report())
+
+
+@require_GET
+def cutover_phase9_exit_report(_request):
+    return JsonResponse(generate_phase9_exit_report())
+
+
+@require_GET
+def cutover_phase10_prep_report(_request):
+    return JsonResponse(generate_phase10_prep_report())
 
 
 @require_GET
@@ -91,6 +167,83 @@ def cutover_preflight_report(request):
     trend_limit = int(request.GET.get("trendLimit") or 7)
     persist = (request.GET.get("persist") or "0") == "1"
     return JsonResponse(generate_cutover_preflight_report(persist=persist, trend_limit=trend_limit))
+
+
+@require_GET
+def sde_import_status(request: HttpRequest):
+    limit = int(request.GET.get("limit") or 10)
+    return JsonResponse(get_sde_import_summary(limit=limit))
+
+
+@require_POST
+def import_sde_from_url_view(request: HttpRequest):
+    body = _parse_json_body(request)
+    archive_url = str(body.get("archiveUrl") or "").strip()
+    triggered_by = str(body.get("triggeredBy") or body.get("changedBy") or "").strip()
+    force_reimport = bool(body.get("forceReimport"))
+
+    if not archive_url:
+        return JsonResponse({"error": "archiveUrl is required"}, status=400)
+
+    try:
+        result = import_sde_from_url(
+            archive_url=archive_url,
+            triggered_by=triggered_by,
+            force_reimport=force_reimport,
+        )
+    except SdeArchiveValidationError as exc:
+        return JsonResponse(
+            {
+                "error": str(exc),
+                **get_sde_import_summary(limit=10),
+            },
+            status=400,
+        )
+    except SdeImportError as exc:
+        return JsonResponse(
+            {
+                "error": str(exc),
+                **get_sde_import_summary(limit=10),
+            },
+            status=500,
+        )
+
+    return JsonResponse(result)
+
+
+@require_POST
+def import_sde_upload_view(request: HttpRequest):
+    uploaded_file = request.FILES.get("archive")
+    triggered_by = str(request.POST.get("triggeredBy") or request.POST.get("changedBy") or "").strip()
+    force_reimport = str(request.POST.get("forceReimport") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    if uploaded_file is None:
+        return JsonResponse({"error": "archive file is required"}, status=400)
+
+    try:
+        result = import_sde_from_upload(
+            uploaded_file=uploaded_file,
+            triggered_by=triggered_by,
+            force_reimport=force_reimport,
+        )
+    except SdeArchiveValidationError as exc:
+        return JsonResponse(
+            {
+                "error": str(exc),
+                **get_sde_import_summary(limit=10),
+            },
+            status=400,
+        )
+    except SdeImportError as exc:
+        return JsonResponse(
+            {
+                "error": str(exc),
+                **get_sde_import_summary(limit=10),
+            },
+            status=500,
+        )
+
+    return JsonResponse(result)
 
 
 @require_POST
@@ -188,6 +341,43 @@ def sync_missing_cutover_roles(request: HttpRequest):
         {
             "syncedRoles": [assignment.role_name for assignment in synced],
             "roleAssignments": readiness["roleAssignments"],
+            "readiness": readiness,
+        }
+    )
+
+
+@require_POST
+def update_cutover_rollback_evidence(request: HttpRequest):
+    body = _parse_json_body(request)
+    evidence_type = str(body.get("evidenceType") or "").strip()
+    evidence_date_raw = str(body.get("evidenceDate") or "").strip()
+    changed_by = str(body.get("changedBy") or body.get("recordedBy") or "").strip()
+    notes = str(body.get("notes") or "").strip()
+
+    allowed_types = {choice for choice, _label in RollbackEvidence.EvidenceType.choices}
+    if evidence_type not in allowed_types:
+        return JsonResponse(
+            {"error": f"evidenceType must be one of: {', '.join(sorted(allowed_types))}"},
+            status=400,
+        )
+
+    parsed_date = None
+    if evidence_date_raw:
+        try:
+            parsed_date = date.fromisoformat(evidence_date_raw)
+        except ValueError:
+            return JsonResponse({"error": "evidenceDate must be a valid ISO date (YYYY-MM-DD)"}, status=400)
+
+    update_rollback_evidence(
+        evidence_type=evidence_type,
+        evidence_date=parsed_date,
+        changed_by=changed_by,
+        notes=notes,
+    )
+    readiness = generate_cutover_readiness_report()
+    return JsonResponse(
+        {
+            "rollbackSummary": get_rollback_evidence_summary(),
             "readiness": readiness,
         }
     )

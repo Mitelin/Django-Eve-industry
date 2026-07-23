@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from io import StringIO
+import json
+import os
+import tempfile
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+import zipfile
 
 from django.core.management import CommandError, call_command
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import TestCase as DjangoTestCase
 from django.test.utils import override_settings
 from django.utils import timezone
@@ -22,7 +29,19 @@ from apps.common.locks import (
     try_advisory_lock,
 )
 from apps.accounts.models import Character
-from apps.common.models import CutoverRoleAssignment, CutoverRoleEvent, ReportSnapshot, ScriptSignoff, ScriptSignoffEvent
+from apps.common.models import (
+    CutoverRoleAssignment,
+    CutoverRoleEvent,
+    ReportSnapshot,
+    RollbackEvidence,
+    RollbackEvidenceEvent,
+    SdeImportRun,
+    SdeImportState,
+    ScriptSignoff,
+    ScriptSignoffEvent,
+)
+from apps.common.rollback import update_rollback_evidence
+from apps.common.sde_import import import_sde_archive
 from apps.corp_sync.models import SyncRun
 from apps.industry_planner.models import PlanJob, Project
 from apps.workforce.models import WorkEvent, WorkItem
@@ -125,6 +144,42 @@ class DatabaseHelperTests(TestCase):
 
         with self.assertRaises(DatabaseConfigurationError):
             require_postgres()
+
+
+class RuntimeVersionTests(DjangoTestCase):
+    @patch("apps.common.views._read_runtime_version")
+    def test_runtime_version_matches_legacy_response_shape(self, read_version_mock: MagicMock) -> None:
+        read_version_mock.return_value = {
+            "source": "git",
+            "commit": "abc123def456",
+            "shortCommit": "abc123d",
+            "branch": "main",
+            "dirty": True,
+        }
+
+        response = self.client.get("/api/version")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["commit"], "abc123def456")
+        self.assertEqual(payload["shortCommit"], "abc123d")
+        self.assertEqual(payload["branch"], "main")
+        self.assertTrue(payload["dirty"])
+        self.assertFalse(payload["schedulerEnabled"])
+        self.assertFalse(payload["schedulerRunning"])
+        self.assertEqual(
+            payload["activityScheduler"],
+            {
+                "running": False,
+                "lastStartedAt": None,
+                "lastFinishedAt": None,
+                "lastSuccessAt": None,
+                "lastResultCount": None,
+                "lastError": None,
+            },
+        )
+        self.assertIsNone(payload["nextActivityRunAt"])
+        self.assertIn("processStartedAt", payload)
 
 
 class CheckPostgresLocksCommandTests(TestCase):
@@ -269,9 +324,134 @@ class CutoverReadinessTests(DjangoTestCase):
             verified_at=timezone.now(),
             priority_score=10,
         )
-        WorkEvent.objects.create(work_item=work_item, actor=pilot_user, event_type="CLAIMED", details={})
-        WorkEvent.objects.create(work_item=work_item, actor=pilot_user, event_type="TEMP_DONE", details={})
-        WorkEvent.objects.create(work_item=work_item, actor=None, event_type="VERIFIED_OK", details={"source": "system"})
+        WorkEvent.objects.create(work_item=work_item, actor=pilot_user, event_type="CLAIMED", details={"assignedUserId": pilot_user.id})
+        WorkEvent.objects.create(work_item=work_item, actor=pilot_user, event_type="TEMP_DONE", details={"assignedUserId": pilot_user.id})
+        WorkEvent.objects.create(work_item=work_item, actor=None, event_type="VERIFIED_OK", details={"source": "system", "assignedUserId": pilot_user.id})
+
+    def _create_pilot_issue_state(self, *, pilot_user) -> None:
+        Character.objects.create(
+            user=pilot_user,
+            eve_character_id=90000124,
+            name="Pilot Issue",
+            corporation_id=321,
+            is_main=True,
+        )
+        for kind in ["assets", "jobs", "wallet_journal", "wallet_transactions"]:
+            SyncRun.objects.create(
+                kind=kind,
+                corporation_id=321,
+                status="ok",
+                rows_written=1,
+                finished_at=timezone.now(),
+            )
+
+        project = Project.objects.create(name="Pilot Incident Project", created_by=pilot_user)
+        stale_plan_job = PlanJob.objects.create(
+            project=project,
+            activity_id=1,
+            blueprint_type_id=101,
+            product_type_id=201,
+            runs=1,
+            expected_duration_s=30,
+            level=1,
+            is_advanced=False,
+            params_hash="pilot-incident-stale",
+        )
+        escalated_plan_job = PlanJob.objects.create(
+            project=project,
+            activity_id=1,
+            blueprint_type_id=102,
+            product_type_id=202,
+            runs=1,
+            expected_duration_s=30,
+            level=1,
+            is_advanced=False,
+            params_hash="pilot-incident-escalated",
+        )
+        stale_item = WorkItem.objects.create(
+            project=project,
+            plan_job=stale_plan_job,
+            kind="start_job",
+            status="temp_done",
+            assigned_to=pilot_user,
+            priority_score=10,
+        )
+        WorkItem.objects.filter(pk=stale_item.pk).update(updated_at=timezone.now() - timedelta(minutes=45))
+        escalated_item = WorkItem.objects.create(
+            project=project,
+            plan_job=escalated_plan_job,
+            kind="start_job",
+            status="failed",
+            assigned_to=pilot_user,
+            priority_score=10,
+        )
+        WorkEvent.objects.create(
+            work_item=escalated_item,
+            actor=None,
+            event_type="VERIFY_MISS",
+            details={"source": "system", "assignedUserId": pilot_user.id},
+        )
+        WorkEvent.objects.create(
+            work_item=escalated_item,
+            actor=None,
+            event_type="ESCALATED",
+            details={"reason": "retry_cap_reached", "source": "system", "assignedUserId": pilot_user.id},
+        )
+        WorkEvent.objects.create(
+            work_item=escalated_item,
+            actor=None,
+            event_type="DIRECTOR_REQUEUED",
+            details={"reason": "manual cleanup", "source": "manual_action", "assignedUserId": pilot_user.id},
+        )
+
+    def _create_pilot_policy_breach_state(self, *, pilot_user) -> None:
+        Character.objects.create(
+            user=pilot_user,
+            eve_character_id=90000125,
+            name="Pilot Policy",
+            corporation_id=321,
+            is_main=True,
+        )
+        for kind in ["assets", "jobs", "wallet_journal", "wallet_transactions"]:
+            SyncRun.objects.create(
+                kind=kind,
+                corporation_id=321,
+                status="ok",
+                rows_written=1,
+                finished_at=timezone.now(),
+            )
+
+        project = Project.objects.create(name="Pilot Policy Project", created_by=pilot_user)
+        plan_job = PlanJob.objects.create(
+            project=project,
+            activity_id=1,
+            blueprint_type_id=103,
+            product_type_id=203,
+            runs=1,
+            expected_duration_s=30,
+            level=1,
+            is_advanced=False,
+            params_hash="pilot-policy-hash",
+        )
+        work_item = WorkItem.objects.create(
+            project=project,
+            plan_job=plan_job,
+            kind="start_job",
+            status="verified",
+            assigned_to=pilot_user,
+            verified_at=timezone.now(),
+            priority_score=10,
+        )
+        WorkEvent.objects.create(work_item=work_item, actor=pilot_user, event_type="CLAIMED", details={"assignedUserId": pilot_user.id})
+        WorkEvent.objects.create(work_item=work_item, actor=pilot_user, event_type="TEMP_DONE", details={"assignedUserId": pilot_user.id})
+        WorkEvent.objects.create(work_item=work_item, actor=None, event_type="VERIFY_MISS", details={"source": "system", "assignedUserId": pilot_user.id})
+        WorkEvent.objects.create(work_item=work_item, actor=None, event_type="VERIFIED_OK", details={"source": "system", "assignedUserId": pilot_user.id})
+        WorkEvent.objects.create(
+            work_item=work_item,
+            actor=None,
+            event_type="DIRECTOR_REQUEUED",
+            details={"reason": "manual cleanup", "source": "manual_action", "assignedUserId": pilot_user.id},
+        )
 
     @override_settings(
         CUTOVER_MODE="assisted",
@@ -347,6 +527,33 @@ class CutoverReadinessTests(DjangoTestCase):
         self.assertEqual(payload["scriptSignoffs"]["validatedCount"], 2)
         self.assertTrue(payload["goNoGo"])
 
+    def test_cutover_readiness_blocks_when_rollback_evidence_enforced_and_missing(self) -> None:
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[10],
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+            CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=True,
+            CUTOVER_RUNBOOK_REVIEWED_AT="",
+            CUTOVER_ROLLBACK_TESTED_AT="",
+        ):
+            self._seed_cutover_green_baseline()
+            response = self.client.get("/api/reports/cutover/readiness")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["checklist"]["rollbackEvidenceGateSatisfied"])
+        self.assertFalse(payload["rollbackSummary"]["status"]["gateSatisfied"])
+        self.assertIn("Rollback runbook review or rollback drill evidence is missing or stale.", payload["blockers"])
+        self.assertFalse(payload["goNoGo"])
+
     @override_settings(CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs"])
     def test_cutover_script_signoffs_route_returns_blocked_items(self) -> None:
         ScriptSignoff.objects.create(
@@ -370,6 +577,35 @@ class CutoverReadinessTests(DjangoTestCase):
         self.assertEqual(payload["items"][0]["scriptName"], "Blueprints.gs")
         self.assertEqual(payload["items"][0]["status"], "blocked")
         self.assertEqual(payload["recentEvents"][0]["newStatus"], "blocked")
+
+    def test_update_cutover_rollback_evidence_route_updates_summary_and_readiness(self) -> None:
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_PILOT_USER_IDS=[10],
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+            CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=True,
+        ):
+            self._seed_cutover_green_baseline()
+            response = self.client.post(
+                "/api/reports/cutover/rollback-evidence/update",
+                data='{"evidenceType": "runbook_review", "evidenceDate": "2026-03-07", "changedBy": "director", "notes": "Reviewed assisted rollback steps."}',
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["rollbackSummary"]["items"][0]["evidenceType"], "runbook_review")
+        self.assertEqual(payload["rollbackSummary"]["items"][0]["evidenceDate"], "2026-03-07")
+        self.assertEqual(payload["rollbackSummary"]["items"][0]["recordedBy"], "director")
+        self.assertEqual(RollbackEvidence.objects.get(evidence_type="runbook_review").recorded_by, "director")
+        self.assertEqual(RollbackEvidenceEvent.objects.count(), 1)
+        self.assertFalse(payload["readiness"]["rollbackSummary"]["status"]["gateSatisfied"])
 
     @override_settings(CUTOVER_MODE="shadow")
     def test_cutover_readiness_command_outputs_json(self) -> None:
@@ -407,6 +643,37 @@ class CutoverReadinessTests(DjangoTestCase):
         self.assertEqual(payload["pilotStage"], "pre_pilot")
         self.assertEqual(payload["activitySummary"]["claimCount"], 0)
         self.assertIn("Pilot cycle has not yet produced a verified completion.", payload["expansionBlockers"])
+        self.assertIn("recommendedActionItems", payload)
+        self.assertIn("recommendedActions", payload)
+
+    def test_cutover_pilot_readiness_route_blocks_start_when_rollback_evidence_is_enforced_and_missing(self) -> None:
+        pilot_user = get_user_model().objects.create_user(username="pilot-rollback", password="x")
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[pilot_user.id],
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+            CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=True,
+            CUTOVER_RUNBOOK_REVIEWED_AT="",
+            CUTOVER_ROLLBACK_TESTED_AT="",
+        ):
+            self._seed_cutover_green_baseline()
+            response = self.client.get("/api/reports/cutover/pilot-readiness")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["pilotStartGoNoGo"])
+        self.assertIn("Rollback runbook review or rollback drill evidence is missing or stale.", payload["startBlockers"])
+        rollback_action = next(item for item in payload["recommendedActionItems"] if item["code"] == "refresh_rollback_evidence")
+        self.assertEqual(rollback_action["actionType"], "focusRollbackEvidence")
 
     def test_cutover_pilot_readiness_route_turns_green_after_verified_pilot_cycle(self) -> None:
         pilot_user = get_user_model().objects.create_user(username="pilot-green", password="x")
@@ -438,6 +705,96 @@ class CutoverReadinessTests(DjangoTestCase):
         self.assertEqual(payload["activitySummary"]["tempDoneCount"], 1)
         self.assertEqual(payload["activitySummary"]["verifiedOkCount"], 1)
         self.assertEqual(payload["activitySummary"]["verifyMissCount"], 0)
+        self.assertEqual(payload["operationalSummary"]["verifyMissRatePercent"], 0.0)
+        self.assertEqual(payload["operationalSummary"]["escalatedCount"], 0)
+        self.assertEqual(payload["operationalSummary"]["tempDonePastSlaCount"], 0)
+        self.assertTrue(payload["policySummary"]["status"]["withinPolicy"])
+
+    def test_cutover_pilot_readiness_route_blocks_expansion_for_sla_breach_and_escalation(self) -> None:
+        pilot_user = get_user_model().objects.create_user(username="pilot-incident", password="x")
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[pilot_user.id],
+            CUTOVER_PILOT_VERIFICATION_SLA_MINUTES=30,
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+        ):
+            self._seed_cutover_green_baseline()
+            self._create_pilot_issue_state(pilot_user=pilot_user)
+
+            response = self.client.get("/api/reports/cutover/pilot-readiness")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["pilotStartGoNoGo"])
+        self.assertFalse(payload["pilotExpansionGoNoGo"])
+        self.assertEqual(payload["operationalSummary"]["verifyMissCount"], 1)
+        self.assertEqual(payload["operationalSummary"]["escalatedCount"], 1)
+        self.assertEqual(payload["operationalSummary"]["tempDonePastSlaCount"], 1)
+        self.assertEqual(payload["operationalSummary"]["failedOpenCount"], 1)
+        self.assertFalse(payload["checklist"]["pilotVerificationSlaHealthy"])
+        self.assertFalse(payload["checklist"]["pilotEscalationFree"])
+        self.assertIn("Pilot already has TEMP_DONE work beyond the verification SLA window.", payload["startBlockers"])
+        self.assertIn("Pilot recorded escalated work items; clear them before expanding rollout.", payload["expansionBlockers"])
+
+    def test_cutover_pilot_readiness_route_blocks_expansion_when_policy_thresholds_are_exceeded(self) -> None:
+        pilot_user = get_user_model().objects.create_user(username="pilot-policy", password="x")
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[pilot_user.id],
+            CUTOVER_PILOT_MAX_VERIFY_MISS_RATE_PERCENT=0,
+            CUTOVER_PILOT_MAX_ESCALATED_COUNT=0,
+            CUTOVER_PILOT_MAX_MANUAL_INTERVENTION_COUNT=0,
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+        ):
+            self._seed_cutover_green_baseline()
+            self._create_pilot_policy_breach_state(pilot_user=pilot_user)
+
+            response = self.client.get("/api/reports/cutover/pilot-readiness")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["pilotStartGoNoGo"])
+        self.assertFalse(payload["pilotExpansionGoNoGo"])
+        self.assertEqual(payload["pilotStage"], "cycle_verified_with_retries")
+        self.assertEqual(payload["operationalSummary"]["verifyMissRatePercent"], 50.0)
+        self.assertEqual(payload["operationalSummary"]["manualInterventionCount"], 1)
+        self.assertFalse(payload["policySummary"]["status"]["verifyMissRateWithinPolicy"])
+        self.assertFalse(payload["policySummary"]["status"]["manualInterventionCountWithinPolicy"])
+        self.assertFalse(payload["policySummary"]["status"]["withinPolicy"])
+        self.assertIn(
+            "Pilot verify-miss rate exceeds policy threshold; hold rollout expansion until retry pressure is back within policy.",
+            payload["expansionBlockers"],
+        )
+        self.assertIn(
+            "Pilot manual interventions exceed policy threshold; hold rollout expansion until operator intervention pressure is back within policy.",
+            payload["expansionBlockers"],
+        )
+        retry_action = next(item for item in payload["recommendedActionItems"] if item["code"] == "reduce_pilot_retry_pressure")
+        manual_action = next(
+            item for item in payload["recommendedActionItems"] if item["code"] == "stabilize_pilot_manual_interventions"
+        )
+        self.assertEqual(retry_action["actionType"], "focusWorkforceBlockers")
+        self.assertEqual(manual_action["actionType"], "focusWorkforceBlockers")
+        self.assertIn(retry_action["label"], payload["recommendedActions"])
+        self.assertIn(manual_action["label"], payload["recommendedActions"])
 
     def test_cutover_pilot_readiness_command_outputs_json(self) -> None:
         stdout = StringIO()
@@ -446,6 +803,141 @@ class CutoverReadinessTests(DjangoTestCase):
 
         self.assertIn('"pilotStartGoNoGo"', stdout.getvalue())
         self.assertIn('"activitySummary"', stdout.getvalue())
+
+    def test_cutover_phase9_exit_report_blocks_primary_when_exit_criteria_are_not_met(self) -> None:
+        pilot_user = get_user_model().objects.create_user(username="pilot-exit-hold", password="x")
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[pilot_user.id],
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+            CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=True,
+            CUTOVER_RUNBOOK_REVIEWED_AT="",
+            CUTOVER_ROLLBACK_TESTED_AT="",
+        ):
+            self._seed_cutover_green_baseline()
+            response = self.client.get("/api/reports/cutover/phase9-exit")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["decisions"]["assistedExitReady"])
+        self.assertFalse(payload["decisions"]["primaryModeReady"])
+        self.assertFalse(payload["decisions"]["compatibilityRetirementReady"])
+        self.assertIn("Rollback runbook review or rollback drill evidence is missing or stale.", payload["blockers"])
+        self.assertIn("Pilot cycle has not yet produced a verified completion.", payload["blockers"])
+        rollback_action = next(item for item in payload["recommendedActionItems"] if item["code"] == "refresh_rollback_evidence")
+        self.assertEqual(rollback_action["actionType"], "focusRollbackEvidence")
+
+    def test_cutover_phase9_exit_report_turns_ready_after_verified_pilot_and_signoffs(self) -> None:
+        pilot_user = get_user_model().objects.create_user(username="pilot-exit-green", password="x")
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[pilot_user.id],
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+            CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=True,
+        ):
+            self._seed_cutover_green_baseline()
+            self._create_pilot_cycle(pilot_user=pilot_user)
+            update_rollback_evidence(
+                evidence_type="runbook_review",
+                evidence_date=timezone.localdate(),
+                changed_by="director",
+                notes="Runbook reviewed before primary-mode decision.",
+            )
+            update_rollback_evidence(
+                evidence_type="rollback_drill",
+                evidence_date=timezone.localdate(),
+                changed_by="director",
+                notes="Rollback drill completed before primary-mode decision.",
+            )
+            ScriptSignoff.objects.filter(script_name__in=["Blueprints.gs", "Corporation.gs"]).update(
+                status=ScriptSignoff.Status.VALIDATED,
+                signed_off_by="director",
+                signed_off_at=timezone.now(),
+            )
+
+            response = self.client.get("/api/reports/cutover/phase9-exit")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["decisions"]["assistedExitReady"])
+        self.assertTrue(payload["decisions"]["primaryModeReady"])
+        self.assertTrue(payload["decisions"]["compatibilityRetirementReady"])
+        self.assertEqual(payload["summary"]["blockingFailureCount"], 0)
+        self.assertEqual(payload["pilot"]["pilotExpansionGoNoGo"], True)
+
+    def test_cutover_phase10_prep_report_blocks_primary_while_still_in_shadow(self) -> None:
+        response = self.client.get("/api/reports/cutover/phase10-prep")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["decisions"]["canEnterPrimaryMode"])
+        self.assertFalse(payload["decisions"]["canDisableCompatibilityMode"])
+        self.assertTrue(payload["decisions"]["requiresLegacyCompatibility"])
+        self.assertIn("System is still in shadow mode; assisted cutover must complete before primary mode.", payload["blockers"])
+
+    def test_cutover_phase10_prep_report_turns_ready_after_phase9_exit_is_green(self) -> None:
+        pilot_user = get_user_model().objects.create_user(username="pilot-phase10-green", password="x")
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[pilot_user.id],
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+            CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=True,
+        ):
+            self._seed_cutover_green_baseline()
+            self._create_pilot_cycle(pilot_user=pilot_user)
+            update_rollback_evidence(
+                evidence_type="runbook_review",
+                evidence_date=timezone.localdate(),
+                changed_by="director",
+                notes="Runbook reviewed before phase 10 prep decision.",
+            )
+            update_rollback_evidence(
+                evidence_type="rollback_drill",
+                evidence_date=timezone.localdate(),
+                changed_by="director",
+                notes="Rollback drill completed before phase 10 prep decision.",
+            )
+            ScriptSignoff.objects.filter(script_name__in=["Blueprints.gs", "Corporation.gs"]).update(
+                status=ScriptSignoff.Status.VALIDATED,
+                signed_off_by="director",
+                signed_off_at=timezone.now(),
+            )
+
+            response = self.client.get("/api/reports/cutover/phase10-prep")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["decisions"]["canEnterPrimaryMode"])
+        self.assertTrue(payload["decisions"]["canDisableCompatibilityMode"])
+        self.assertFalse(payload["decisions"]["requiresLegacyCompatibility"])
+        self.assertEqual(payload["summary"]["blockingFailureCount"], 0)
 
     def test_cutover_preflight_command_outputs_actions_and_deltas(self) -> None:
         ReportSnapshot.objects.create(
@@ -496,6 +988,34 @@ class CutoverReadinessTests(DjangoTestCase):
         self.assertTrue(manual_item["guidanceTitle"])
         self.assertGreaterEqual(len(manual_item["guidanceSteps"]), 1)
         self.assertEqual(manual_item["targetSetting"], "CUTOVER_PILOT_USER_IDS")
+
+    def test_cutover_preflight_includes_rollback_evidence_guidance_when_enforced_and_missing(self) -> None:
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_PILOT_USER_IDS=[10],
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+            CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=True,
+            CUTOVER_RUNBOOK_REVIEWED_AT="",
+            CUTOVER_ROLLBACK_TESTED_AT="",
+        ):
+            self._seed_cutover_green_baseline()
+            response = self.client.get("/api/reports/cutover/preflight?trendLimit=3")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        rollback_item = next(item for item in payload["recommendedActionItems"] if item["code"] == "refresh_rollback_evidence")
+        self.assertEqual(rollback_item["actionType"], "focusRollbackEvidence")
+        self.assertEqual(
+            rollback_item["targetSetting"],
+            "CUTOVER_RUNBOOK_REVIEWED_AT,CUTOVER_ROLLBACK_TESTED_AT",
+        )
+        self.assertIn("Rollback runbook review or rollback drill evidence is missing or stale.", payload["preflightBlockers"])
 
     @patch("apps.common.preflight.generate_cutover_readiness_report")
     def test_cutover_preflight_operational_actions_include_focus_types(
@@ -634,6 +1154,11 @@ class CutoverReadinessTests(DjangoTestCase):
                     "goNoGo": True,
                     "blockers": [],
                 },
+                "rollbackSummary": {
+                    "status": {"gateSatisfied": True},
+                    "runbookReviewedAt": "2026-03-01",
+                    "rollbackTestedAt": "2026-03-01",
+                },
                 "recommendedActions": [],
                 "current": {
                     "assignedRoles": 6,
@@ -665,8 +1190,71 @@ class CutoverReadinessTests(DjangoTestCase):
         self.assertEqual(ownership_blocker["actionItem"]["code"], "assign_missing_roles")
         self.assertIn("currentWorkforceProvenance", changes)
         self.assertIn("workforceProvenanceDelta", changes)
+        self.assertIn("rollbackComparison", changes)
         self.assertNotEqual(payload["recommendedActionItems"][0]["actionType"], "persistEvidence")
         self.assertNotIn("payload", payload["latestStoredPreflightSnapshot"])
+
+    def test_cutover_preflight_diff_tracks_rollback_evidence_changes_against_baseline(self) -> None:
+        ReportSnapshot.objects.create(
+            snapshot_date=timezone.localdate(),
+            report_name="cutover_preflight",
+            incident_count=0,
+            go_no_go=True,
+            payload={
+                "readiness": {
+                    "mode": "assisted",
+                    "goNoGo": True,
+                    "blockers": [],
+                },
+                "rollbackSummary": {
+                    "status": {"gateSatisfied": True},
+                    "runbookReviewedAt": "2026-03-01",
+                    "rollbackTestedAt": "2026-03-01",
+                },
+                "recommendedActions": [],
+                "current": {
+                    "assignedRoles": 6,
+                    "requiredRoles": 6,
+                    "validatedSignoffs": 4,
+                    "requiredSignoffs": 4,
+                    "blockerCount": 0,
+                    "incidentCount": 0,
+                    "workforceProvenance": {"total": 1, "recommended": 1, "manual": 0, "system": 0},
+                },
+            },
+        )
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_PILOT_USER_IDS=[10],
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+            CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=True,
+            CUTOVER_RUNBOOK_REVIEWED_AT="",
+            CUTOVER_ROLLBACK_TESTED_AT="",
+        ):
+            self._seed_cutover_green_baseline()
+            response = self.client.get("/api/reports/cutover/preflight?trendLimit=3")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        changes = payload["changesVsStoredPreflight"]
+        self.assertTrue(changes["rollbackComparison"]["gateChanged"])
+        self.assertEqual(changes["rollbackComparison"]["previousGateSatisfied"], True)
+        self.assertEqual(changes["rollbackComparison"]["currentGateSatisfied"], False)
+        self.assertTrue(changes["rollbackComparison"]["runbookChanged"])
+        self.assertTrue(changes["rollbackComparison"]["rollbackTestChanged"])
+        rollback_gate_row = next(item for item in changes["detailRows"] if item["label"] == "Rollback gate changed")
+        self.assertEqual(rollback_gate_row["actionItem"]["code"], "refresh_rollback_evidence")
+        runbook_row = next(item for item in changes["detailRows"] if item["label"] == "Runbook evidence updated")
+        self.assertEqual(runbook_row["value"], "2026-03-01 -> missing")
+        drill_row = next(item for item in changes["detailRows"] if item["label"] == "Rollback drill evidence updated")
+        self.assertEqual(drill_row["value"], "2026-03-01 -> missing")
 
     @patch("apps.common.preflight.generate_cutover_readiness_report")
     def test_cutover_preflight_route_flags_manual_intervention_growth_against_baseline(
@@ -829,6 +1417,100 @@ class CutoverReadinessTests(DjangoTestCase):
             payload["preflightBlockers"],
         )
         self.assertEqual(payload["current"]["preflightBlockerCount"], 1)
+
+    def test_cutover_preflight_blocks_assisted_expansion_when_pilot_posture_is_not_ready(self) -> None:
+        pilot_user = get_user_model().objects.create_user(username="pilot-preflight", password="x")
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[pilot_user.id],
+            CUTOVER_PILOT_MAX_VERIFY_MISS_RATE_PERCENT=0,
+            CUTOVER_PILOT_MAX_ESCALATED_COUNT=0,
+            CUTOVER_PILOT_MAX_MANUAL_INTERVENTION_COUNT=0,
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+        ):
+            self._seed_cutover_green_baseline()
+            self._create_pilot_policy_breach_state(pilot_user=pilot_user)
+
+            response = self.client.get("/api/reports/cutover/preflight?trendLimit=3")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["effectiveGoNoGo"])
+        self.assertIn("Pilot rollout evidence is not yet ready for assisted expansion.", payload["preflightBlockers"])
+        self.assertEqual(payload["pilot"]["pilotStage"], "cycle_verified_with_retries")
+        self.assertFalse(payload["pilot"]["pilotExpansionGoNoGo"])
+        self.assertTrue(payload["pilot"]["policyBlocked"])
+        self.assertEqual(payload["current"]["pilotStage"], "cycle_verified_with_retries")
+        self.assertTrue(payload["current"]["pilotPolicyBlocked"])
+        self.assertEqual(payload["current"]["pilotIncidentCount"], 1)
+        retry_action = next(item for item in payload["recommendedActionItems"] if item["code"] == "reduce_pilot_retry_pressure")
+        manual_action = next(
+            item for item in payload["recommendedActionItems"] if item["code"] == "stabilize_pilot_manual_interventions"
+        )
+        self.assertEqual(retry_action["actionType"], "focusWorkforceBlockers")
+        self.assertEqual(manual_action["actionType"], "focusWorkforceBlockers")
+
+    def test_cutover_preflight_diff_maps_integrated_pilot_blocker_to_action_item(self) -> None:
+        ReportSnapshot.objects.create(
+            snapshot_date=timezone.localdate(),
+            report_name="cutover_preflight",
+            incident_count=0,
+            go_no_go=True,
+            payload={
+                "readiness": {"mode": "assisted", "goNoGo": True, "blockers": []},
+                "recommendedActions": [],
+                "current": {
+                    "assignedRoles": 6,
+                    "requiredRoles": 6,
+                    "validatedSignoffs": 4,
+                    "requiredSignoffs": 4,
+                    "blockerCount": 0,
+                    "incidentCount": 0,
+                    "workforceProvenance": {"total": 1, "recommended": 1, "manual": 0, "system": 0},
+                },
+            },
+        )
+        pilot_user = get_user_model().objects.create_user(username="pilot-diff", password="x")
+
+        with self.settings(
+            CUTOVER_MODE="assisted",
+            CUTOVER_READ_ONLY_ASSIGNMENT=False,
+            CUTOVER_COMPATIBILITY_MODE=True,
+            CUTOVER_PILOT_USER_IDS=[pilot_user.id],
+            CUTOVER_PILOT_MAX_VERIFY_MISS_RATE_PERCENT=0,
+            CUTOVER_PILOT_MAX_ESCALATED_COUNT=0,
+            CUTOVER_PILOT_MAX_MANUAL_INTERVENTION_COUNT=0,
+            CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"],
+            CUTOVER_LEAD="lead",
+            CUTOVER_INCIDENT_COMMANDER="ic",
+            CUTOVER_BACKEND_OWNER="backend",
+            CUTOVER_DATA_OWNER="data",
+            CUTOVER_DIRECTOR_REPRESENTATIVE="director",
+            CUTOVER_ROLLBACK_APPROVER="rollback",
+        ):
+            self._seed_cutover_green_baseline()
+            self._create_pilot_policy_breach_state(pilot_user=pilot_user)
+
+            response = self.client.get("/api/reports/cutover/preflight?trendLimit=3")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        blocker_row = next(
+            item
+            for item in payload["changesVsStoredPreflight"]["detailRows"]
+            if item["label"] == "Blocker added"
+            and item["value"] == "Pilot rollout evidence is not yet ready for assisted expansion."
+        )
+        self.assertEqual(blocker_row["actionItem"]["code"], "reduce_pilot_retry_pressure")
 
     @override_settings(CUTOVER_REQUIRED_SCRIPT_SIGNOFFS=["Blueprints.gs", "Corporation.gs"])
     def test_update_cutover_script_signoff_route_updates_summary_and_readiness(self) -> None:
@@ -1023,11 +1705,12 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
 
         call_command("persist_report_snapshots", stdout=stdout)
 
-        self.assertEqual(ReportSnapshot.objects.count(), 4)
+        self.assertEqual(ReportSnapshot.objects.count(), 5)
         self.assertIn("shadow_summary", stdout.getvalue())
         self.assertIn("cutover_readiness", stdout.getvalue())
         self.assertIn("cutover_pilot_readiness", stdout.getvalue())
         self.assertIn("cutover_preflight", stdout.getvalue())
+        self.assertIn("cutover_phase9_exit", stdout.getvalue())
 
     def test_report_history_route_returns_recent_snapshots(self) -> None:
         call_command("persist_report_snapshots")
@@ -1036,10 +1719,10 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(len(payload["snapshots"]), 4)
+        self.assertEqual(len(payload["snapshots"]), 5)
         self.assertEqual(
             {item["reportName"] for item in payload["snapshots"]},
-            {"shadow_summary", "cutover_readiness", "cutover_pilot_readiness", "cutover_preflight"},
+            {"shadow_summary", "cutover_readiness", "cutover_pilot_readiness", "cutover_preflight", "cutover_phase9_exit"},
         )
 
     def test_persist_report_history_route_stores_all_snapshot_types(self) -> None:
@@ -1047,14 +1730,59 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(ReportSnapshot.objects.count(), 4)
+        self.assertEqual(ReportSnapshot.objects.count(), 5)
         self.assertEqual(
             {item["reportName"] for item in payload["storedSnapshots"]},
-            {"shadow_summary", "cutover_readiness", "cutover_pilot_readiness", "cutover_preflight"},
+            {"shadow_summary", "cutover_readiness", "cutover_pilot_readiness", "cutover_preflight", "cutover_phase9_exit"},
         )
 
+    def test_report_history_route_can_filter_phase9_exit_snapshot(self) -> None:
+        ReportSnapshot.objects.create(
+            snapshot_date=timezone.localdate(),
+            report_name="cutover_phase9_exit",
+            incident_count=2,
+            go_no_go=False,
+            payload={
+                "currentMode": "assisted",
+                "pilotStage": "awaiting_verification",
+                "decisions": {
+                    "assistedExitReady": False,
+                    "primaryModeReady": False,
+                    "compatibilityRetirementReady": False,
+                },
+                "summary": {
+                    "blockingFailureCount": 2,
+                },
+                "blockers": ["Pilot cycle has not yet produced a verified completion."],
+            },
+        )
+
+        response = self.client.get("/api/reports/history?reportName=cutover_phase9_exit&limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["snapshots"]), 1)
+        self.assertEqual(payload["snapshots"][0]["reportName"], "cutover_phase9_exit")
+        self.assertFalse(payload["snapshots"][0]["payload"]["decisions"]["primaryModeReady"])
+        self.assertEqual(payload["snapshots"][0]["payload"]["summary"]["blockingFailureCount"], 2)
+
     def test_report_history_route_can_filter_by_report_name(self) -> None:
-        call_command("persist_report_snapshots")
+        ReportSnapshot.objects.create(
+            snapshot_date=timezone.localdate(),
+            report_name="cutover_readiness",
+            incident_count=1,
+            go_no_go=False,
+            payload={
+                "mode": "assisted",
+                "blockers": ["rollback stale"],
+                "scriptSignoffs": {"validatedCount": 2, "requiredCount": 4},
+                "rollbackSummary": {
+                    "status": {"gateSatisfied": False},
+                    "runbookReviewedAt": "2026-03-01",
+                    "rollbackTestedAt": "2026-02-20",
+                },
+            },
+        )
 
         response = self.client.get("/api/reports/history?reportName=cutover_readiness&limit=10")
 
@@ -1062,9 +1790,35 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
         payload = response.json()
         self.assertEqual(len(payload["snapshots"]), 1)
         self.assertEqual(payload["snapshots"][0]["reportName"], "cutover_readiness")
+        self.assertFalse(payload["snapshots"][0]["payload"]["rollbackSummary"]["status"]["gateSatisfied"])
+        self.assertEqual(payload["snapshots"][0]["payload"]["rollbackSummary"]["runbookReviewedAt"], "2026-03-01")
 
     def test_report_history_route_can_filter_preflight_snapshot(self) -> None:
-        call_command("persist_report_snapshots")
+        ReportSnapshot.objects.create(
+            snapshot_date=timezone.localdate(),
+            report_name="cutover_preflight",
+            incident_count=1,
+            go_no_go=False,
+            payload={
+                "readiness": {"mode": "assisted", "goNoGo": False, "blockers": []},
+                "rollbackSummary": {
+                    "status": {
+                        "gateSatisfied": False,
+                    },
+                    "runbookReviewedAt": "2026-03-01",
+                    "rollbackTestedAt": "2026-02-20",
+                },
+                "current": {
+                    "assignedRoles": 6,
+                    "requiredRoles": 6,
+                    "validatedSignoffs": 4,
+                    "requiredSignoffs": 4,
+                    "blockerCount": 1,
+                    "incidentCount": 1,
+                    "workforceProvenance": {"total": 1, "recommended": 1, "manual": 0, "system": 0},
+                },
+            },
+        )
 
         response = self.client.get("/api/reports/history?reportName=cutover_preflight&limit=10")
 
@@ -1072,9 +1826,29 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
         payload = response.json()
         self.assertEqual(len(payload["snapshots"]), 1)
         self.assertEqual(payload["snapshots"][0]["reportName"], "cutover_preflight")
+        self.assertFalse(payload["snapshots"][0]["payload"]["rollbackSummary"]["status"]["gateSatisfied"])
+        self.assertEqual(payload["snapshots"][0]["payload"]["rollbackSummary"]["runbookReviewedAt"], "2026-03-01")
 
     def test_report_history_route_can_filter_pilot_snapshot(self) -> None:
-        call_command("persist_report_snapshots")
+        ReportSnapshot.objects.create(
+            snapshot_date=timezone.localdate(),
+            report_name="cutover_pilot_readiness",
+            incident_count=1,
+            go_no_go=False,
+            payload={
+                "pilotStage": "awaiting_verification",
+                "rollbackSummary": {
+                    "status": {
+                        "gateSatisfied": False,
+                        "evidenceCurrent": False,
+                    },
+                    "runbookReviewedAt": "2026-03-01",
+                    "runbookAgeDays": 6,
+                    "rollbackTestedAt": "2026-02-20",
+                    "rollbackTestAgeDays": 16,
+                },
+            },
+        )
 
         response = self.client.get("/api/reports/history?reportName=cutover_pilot_readiness&limit=10")
 
@@ -1082,6 +1856,8 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
         payload = response.json()
         self.assertEqual(len(payload["snapshots"]), 1)
         self.assertEqual(payload["snapshots"][0]["reportName"], "cutover_pilot_readiness")
+        self.assertFalse(payload["snapshots"][0]["payload"]["rollbackSummary"]["status"]["gateSatisfied"])
+        self.assertEqual(payload["snapshots"][0]["payload"]["rollbackSummary"]["runbookReviewedAt"], "2026-03-01")
 
     def test_cutover_trend_route_returns_derived_counts(self) -> None:
         ReportSnapshot.objects.create(
@@ -1094,6 +1870,11 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
                 "blockers": ["ownership incomplete", "signoffs pending"],
                 "roleAssignments": {"assignedCount": 3, "requiredCount": 6},
                 "scriptSignoffs": {"validatedCount": 1, "requiredCount": 4},
+                "rollbackSummary": {
+                    "status": {"gateSatisfied": False},
+                    "runbookReviewedAt": "2026-03-01",
+                    "rollbackTestedAt": "2026-02-20",
+                },
             },
         )
 
@@ -1105,6 +1886,9 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
         self.assertEqual(payload["trend"][0]["assignedRoles"], 3)
         self.assertEqual(payload["trend"][0]["validatedSignoffs"], 1)
         self.assertEqual(payload["trend"][0]["blockerCount"], 2)
+        self.assertFalse(payload["trend"][0]["rollbackGateSatisfied"])
+        self.assertEqual(payload["trend"][0]["runbookReviewedAt"], "2026-03-01")
+        self.assertEqual(payload["trend"][0]["rollbackTestedAt"], "2026-02-20")
 
     def test_cutover_pilot_trend_route_returns_stage_and_cycle_counts(self) -> None:
         ReportSnapshot.objects.create(
@@ -1123,6 +1907,29 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
                     "verifiedOkCount": 0,
                     "verifyMissCount": 1,
                 },
+                "operationalSummary": {
+                    "verifyMissRatePercent": 100.0,
+                    "escalatedCount": 1,
+                    "directorInterventionCount": 2,
+                    "manualInterventionCount": 1,
+                    "tempDonePastSlaCount": 1,
+                    "failedOpenCount": 1,
+                },
+                "policySummary": {
+                    "status": {
+                        "withinPolicy": False,
+                    }
+                },
+                "rollbackSummary": {
+                    "status": {
+                        "gateSatisfied": False,
+                        "evidenceCurrent": False,
+                    },
+                    "runbookReviewedAt": "2026-03-01",
+                    "runbookAgeDays": 6,
+                    "rollbackTestedAt": "2026-02-20",
+                    "rollbackTestAgeDays": 16,
+                },
                 "expansionBlockers": ["Pilot cycle recorded verification misses; resolve them before expanding rollout."],
             },
         )
@@ -1138,3 +1945,183 @@ class ReportSnapshotHistoryTests(DjangoTestCase):
         self.assertEqual(payload["trend"][0]["pilotUserCount"], 2)
         self.assertEqual(payload["trend"][0]["claimCount"], 1)
         self.assertEqual(payload["trend"][0]["verifyMissCount"], 1)
+        self.assertEqual(payload["trend"][0]["verifyMissRatePercent"], 100.0)
+        self.assertEqual(payload["trend"][0]["escalatedCount"], 1)
+        self.assertEqual(payload["trend"][0]["manualInterventionCount"], 1)
+        self.assertEqual(payload["trend"][0]["tempDonePastSlaCount"], 1)
+        self.assertTrue(payload["trend"][0]["policyBlocked"])
+        self.assertFalse(payload["trend"][0]["rollbackGateSatisfied"])
+        self.assertFalse(payload["trend"][0]["rollbackEvidenceCurrent"])
+        self.assertEqual(payload["trend"][0]["runbookReviewedAt"], "2026-03-01")
+        self.assertEqual(payload["trend"][0]["rollbackTestedAt"], "2026-02-20")
+
+
+class SdeImportTests(DjangoTestCase):
+    def _build_sde_archive(self, *, build_number: int, release_date: str, product_name: str) -> str:
+        temp_file = tempfile.NamedTemporaryFile(prefix="sde_test_", suffix=".zip", delete=False)
+        archive_path = temp_file.name
+        temp_file.close()
+
+        categories = [{"_key": 1, "name": {"en": "Ship"}}]
+        groups = [{"_key": 10, "categoryID": 1, "name": {"en": "Frigate"}}]
+        types = [
+            {"_key": 1000, "groupID": 10, "name": {"en": "Blueprint A"}, "portionSize": 1},
+            {"_key": 2000, "groupID": 10, "name": {"en": product_name}, "portionSize": 1},
+            {"_key": 3000, "groupID": 10, "name": {"en": "Tritanium"}, "portionSize": 1},
+        ]
+        blueprints = [
+            {
+                "_key": 1000,
+                "blueprintTypeID": 1000,
+                "maxProductionLimit": 300,
+                "activities": {
+                    "manufacturing": {
+                        "time": 120,
+                        "materials": [{"typeID": 3000, "quantity": 7}],
+                        "products": [{"typeID": 2000, "quantity": 1}],
+                    }
+                },
+            }
+        ]
+        type_materials = [{"_key": 2000, "materials": [{"materialTypeID": 3000, "quantity": 7}]}]
+
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("ccp/_sde.jsonl", json.dumps({"buildNumber": build_number, "releaseDate": release_date}) + "\n")
+            archive.writestr("ccp/categories.jsonl", "".join(json.dumps(row) + "\n" for row in categories))
+            archive.writestr("ccp/groups.jsonl", "".join(json.dumps(row) + "\n" for row in groups))
+            archive.writestr("ccp/types.jsonl", "".join(json.dumps(row) + "\n" for row in types))
+            archive.writestr("ccp/blueprints.jsonl", "".join(json.dumps(row) + "\n" for row in blueprints))
+            archive.writestr("ccp/typeMaterials.jsonl", "".join(json.dumps(row) + "\n" for row in type_materials))
+
+        return archive_path
+
+    def test_import_sde_archive_replaces_existing_build_and_updates_state(self) -> None:
+        first_archive = self._build_sde_archive(build_number=100, release_date="2026-03-01", product_name="First Product")
+        second_archive = self._build_sde_archive(build_number=101, release_date="2026-03-02", product_name="Second Product")
+
+        try:
+            first_result = import_sde_archive(archive_path=first_archive, source_filename="first.zip", triggered_by="director")
+            second_result = import_sde_archive(archive_path=second_archive, source_filename="second.zip", triggered_by="director")
+        finally:
+            for path in [first_archive, second_archive]:
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+
+        self.assertTrue(first_result["imported"])
+        self.assertTrue(second_result["imported"])
+        state = SdeImportState.objects.get(source="ccp_sde")
+        self.assertEqual(state.current_build_number, 101)
+        self.assertEqual(state.source_filename, "second.zip")
+
+        latest_run = SdeImportRun.objects.first()
+        self.assertEqual(latest_run.status, SdeImportRun.Status.SUCCEEDED)
+        self.assertEqual(latest_run.imported_build_number, 101)
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT typeName FROM invTypes WHERE typeID = %s", [2000])
+            row = cursor.fetchone()
+        self.assertEqual(row[0], "Second Product")
+
+    def test_import_sde_archive_skips_same_build_without_force(self) -> None:
+        archive_path = self._build_sde_archive(build_number=120, release_date="2026-03-03", product_name="Stable Product")
+
+        try:
+            first_result = import_sde_archive(archive_path=archive_path, source_filename="stable.zip", triggered_by="director")
+            second_result = import_sde_archive(archive_path=archive_path, source_filename="stable.zip", triggered_by="director")
+        finally:
+            try:
+                os.unlink(archive_path)
+            except FileNotFoundError:
+                pass
+
+        self.assertTrue(first_result["imported"])
+        self.assertTrue(second_result["skipped"])
+        self.assertEqual(SdeImportRun.objects.filter(status=SdeImportRun.Status.SKIPPED).count(), 1)
+
+    @patch("apps.common.views.import_sde_from_url")
+    def test_sde_import_route_accepts_url_and_returns_state(self, import_from_url_mock: MagicMock) -> None:
+        import_from_url_mock.return_value = {
+            "imported": True,
+            "skipped": False,
+            "state": {
+                "source": "ccp_sde",
+                "currentBuildNumber": 555,
+                "currentReleaseDate": "2026-03-05",
+                "archiveSha256": "abc",
+                "archiveSourceUrl": "https://example.invalid/ccp.zip",
+                "sourceFilename": "ccp.zip",
+                "lastCheckedAt": None,
+                "lastImportedAt": None,
+            },
+            "run": {
+                "id": 1,
+                "status": "succeeded",
+                "detectedBuildNumber": 555,
+                "importedBuildNumber": 555,
+            },
+        }
+
+        response = self.client.post(
+            "/api/sde/import-from-url",
+            data=json.dumps(
+                {
+                    "archiveUrl": "https://example.invalid/ccp.zip",
+                    "triggeredBy": "director",
+                    "forceReimport": True,
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["imported"])
+        self.assertEqual(payload["state"]["currentBuildNumber"], 555)
+        import_from_url_mock.assert_called_once_with(
+            archive_url="https://example.invalid/ccp.zip",
+            triggered_by="director",
+            force_reimport=True,
+        )
+
+    @patch("apps.common.views.import_sde_from_upload")
+    def test_sde_import_upload_route_accepts_zip_file_and_returns_state(self, import_from_upload_mock: MagicMock) -> None:
+        import_from_upload_mock.return_value = {
+            "imported": True,
+            "skipped": False,
+            "state": {
+                "source": "ccp_sde",
+                "currentBuildNumber": 777,
+                "currentReleaseDate": "2026-03-06",
+                "archiveSha256": "def",
+                "archiveSourceUrl": "",
+                "sourceFilename": "ccp-upload.zip",
+                "lastCheckedAt": None,
+                "lastImportedAt": None,
+            },
+            "run": {
+                "id": 2,
+                "status": "succeeded",
+                "detectedBuildNumber": 777,
+                "importedBuildNumber": 777,
+            },
+        }
+        uploaded_file = SimpleUploadedFile("ccp-upload.zip", b"PK\x03\x04fakezip", content_type="application/zip")
+
+        response = self.client.post(
+            "/api/sde/import-upload",
+            data={
+                "archive": uploaded_file,
+                "triggeredBy": "director",
+                "forceReimport": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["imported"])
+        self.assertEqual(payload["state"]["currentBuildNumber"], 777)
+        import_from_upload_mock.assert_called_once()
+        self.assertEqual(import_from_upload_mock.call_args.kwargs["triggered_by"], "director")
+        self.assertEqual(import_from_upload_mock.call_args.kwargs["force_reimport"], True)

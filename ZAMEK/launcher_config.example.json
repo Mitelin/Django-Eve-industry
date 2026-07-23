@@ -1,0 +1,58 @@
+{
+  "repo_path": ".",
+  "python_executable": ".venv/Scripts/python",
+
+  "backend_command": [".venv/Scripts/python", "-m", "py_backend"],
+
+  "backend_stdout": "logs/backend.out.log",
+  "backend_stderr": "logs/backend.err.log",
+
+  "env": {
+    "DB_HOST": "127.0.0.1",
+    "DB_PORT": "3306",
+    "DB_USER": "root",
+    "DB_PASSWORD": "",
+    "DB_NAME": "eve",
+
+    "CORPORATION_ID": "0",
+    "CEO_CHARACTER_ID": "0",
+
+    "LOG_LEVEL": "2",
+    "ENABLE_SCHEDULER": "0",
+
+    "EVE_CLIENT_ID": "",
+    "EVE_CLIENT_SECRET": "",
+    "EVE_API_BASE": "https://esi.evetech.net/latest",
+    "EVE_TOKEN_API": "https://login.eveonline.com/v2/oauth/token"
+  },
+
+  "database": {
+    "create_database": true,
+
+    "require_sde_tables": true,
+    "sde_import": {
+      "ccp_jsonl_dir": "py_backend/SDE CCP",
+      "sql_path": "",
+      "mysql_client": "mysql"
+    }
+  },
+
+  "git": {
+    "enabled": true,
+    "check_interval_minutes": 60,
+    "pull_on_new_version": true
+  },
+
+  "restart_window": {
+    "hours": [4],
+    "minute": 0,
+    "restart_even_if_no_git_change": true
+  },
+
+  "preserve_paths": [
+    "ZAMEK",
+    "CONTEXTPREPIS.MD",
+    "uzivatele.md",
+    "LAUNCHER.md"
+  ]
+}

@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from django.contrib.auth import get_user_model
+from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from django.utils.dateparse import parse_datetime
+from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.accounts.access import is_director
 from apps.industry_planner.models import Project, ProjectTarget
 from apps.industry_planner.shadow import generate_shadow_planner_report
 from apps.industry_planner.services import IndustryPlannerService, resolve_material_multipliers
@@ -67,19 +70,87 @@ def _build_bonus_tuple(body: dict[str, Any]) -> tuple[float, float, float]:
     )
 
 
+def _auth_required_json() -> JsonResponse:
+    return JsonResponse({"error": "Authentication required", "loginUrl": reverse("eve-login-page")}, status=401)
+
+
+def _forbidden_json(message: str) -> JsonResponse:
+    return JsonResponse({"error": message}, status=403)
+
+
+def _require_director_api_user(request: HttpRequest):
+    if not request.user.is_authenticated:
+        return _auth_required_json()
+    if not is_director(request.user):
+        return _forbidden_json("Director access is required")
+    return request.user
+
+
+def _default_job_name() -> str:
+    return timezone.localtime().strftime("Job %Y-%m-%d %H:%M")
+
+
+def _build_type_name_map(project: Project, *, include_plan_rows: bool = False) -> dict[int, str]:
+    type_ids = {int(target.type_id) for target in project.targets.all()}
+    if include_plan_rows:
+        type_ids.update(int(plan_job.blueprint_type_id) for plan_job in project.plan_jobs.all())
+        type_ids.update(int(plan_job.product_type_id) for plan_job in project.plan_jobs.all())
+        type_ids.update(int(material.material_type_id) for material in project.plan_materials.all())
+    if not type_ids:
+        return {}
+    try:
+        return planner_service.get_type_names(sorted(type_ids))
+    except Exception:
+        return {}
+
+
+def _build_project_types(project: Project) -> list[dict[str, Any]]:
+    return [
+        {"typeId": target.type_id, "amount": target.quantity}
+        for target in project.targets.filter(is_final_output=True).order_by("id")
+    ]
+
+
+def _rebuild_project_from_body(project: Project, body: dict[str, Any]) -> dict[str, Any]:
+    types = body.get("types")
+    if types is None:
+        types = _build_project_types(project)
+
+    efficiency = _build_efficiency(body)
+    build_t1, copy_bpo, produce_fuel_blocks, merge_modules = _build_flags(body)
+    manufacturing_role_bonus, manufacturing_rig_bonus, reaction_rig_bonus = _build_bonus_tuple(body)
+
+    return planner_service.rebuild_project_plan(
+        project=project,
+        types=types,
+        efficiency=efficiency,
+        build_t1=build_t1,
+        copy_bpo=copy_bpo,
+        produce_fuel_blocks=produce_fuel_blocks,
+        merge_modules=merge_modules,
+        manufacturing_role_bonus=manufacturing_role_bonus,
+        manufacturing_rig_bonus=manufacturing_rig_bonus,
+        reaction_rig_bonus=reaction_rig_bonus,
+    )
+
+
 def _serialize_project(project: Project, *, include_plan_rows: bool = True) -> dict[str, Any]:
+    type_name_map = _build_type_name_map(project, include_plan_rows=include_plan_rows)
     data: dict[str, Any] = {
         "id": project.id,
         "name": project.name,
         "priority": project.priority,
         "status": project.status,
         "createdByUserId": project.created_by_id,
+        "createdAt": project.created_at.isoformat().replace("+00:00", "Z"),
+        "updatedAt": project.updated_at.isoformat().replace("+00:00", "Z"),
         "dueAt": project.due_at.isoformat().replace("+00:00", "Z") if project.due_at else None,
         "notes": project.notes,
         "targets": [
             {
                 "id": target.id,
                 "typeId": target.type_id,
+                "typeName": type_name_map.get(int(target.type_id), ""),
                 "quantity": target.quantity,
                 "isFinalOutput": target.is_final_output,
             }
@@ -98,7 +169,9 @@ def _serialize_project(project: Project, *, include_plan_rows: bool = True) -> d
             "id": plan_job.id,
             "activityId": plan_job.activity_id,
             "blueprintTypeId": plan_job.blueprint_type_id,
+            "blueprintTypeName": type_name_map.get(int(plan_job.blueprint_type_id), ""),
             "productTypeId": plan_job.product_type_id,
+            "productTypeName": type_name_map.get(int(plan_job.product_type_id), ""),
             "runs": plan_job.runs,
             "expectedDurationS": plan_job.expected_duration_s,
             "level": plan_job.level,
@@ -109,6 +182,7 @@ def _serialize_project(project: Project, *, include_plan_rows: bool = True) -> d
                 {
                     "id": material.id,
                     "materialTypeId": material.material_type_id,
+                    "materialTypeName": type_name_map.get(int(material.material_type_id), ""),
                     "quantityTotal": material.quantity_total,
                     "activityId": material.activity_id,
                     "level": material.level,
@@ -124,6 +198,7 @@ def _serialize_project(project: Project, *, include_plan_rows: bool = True) -> d
         {
             "id": material.id,
             "materialTypeId": material.material_type_id,
+            "materialTypeName": type_name_map.get(int(material.material_type_id), ""),
             "quantityTotal": material.quantity_total,
             "activityId": material.activity_id,
             "level": material.level,
@@ -214,7 +289,6 @@ def calculate_blueprint_by_id(request: HttpRequest, type_id: int) -> HttpRespons
             efficiency=efficiency,
             build_t1=build_t1,
             copy_bpo=copy_bpo,
-            produce_fuel_blocks=produce_fuel_blocks,
             merge_modules=merge_modules,
             manufacturing_role_bonus=manufacturing_role_bonus,
             manufacturing_rig_bonus=manufacturing_rig_bonus,
@@ -236,8 +310,11 @@ def ore_material(request: HttpRequest) -> HttpResponse:
 
 
 @require_GET
-def list_projects(_request: HttpRequest) -> JsonResponse:
-    projects = Project.objects.order_by("-priority", "name")
+def list_projects(request: HttpRequest) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
+    projects = Project.objects.order_by("-priority", "-created_at", "name")
     return JsonResponse({"projects": [_serialize_project(project, include_plan_rows=False) for project in projects]})
 
 
@@ -248,16 +325,11 @@ def shadow_planner_report(_request: HttpRequest) -> JsonResponse:
 
 @require_POST
 def create_project(request: HttpRequest) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     body = _parse_json_body(request)
-    name = (body.get("name") or "").strip()
-    created_by_user_id = body.get("createdByUserId")
-
-    if not name:
-        return JsonResponse({"error": "name is required"}, status=400)
-    if created_by_user_id is None:
-        return JsonResponse({"error": "createdByUserId is required"}, status=400)
-
-    user = get_object_or_404(get_user_model(), pk=int(created_by_user_id))
+    name = str(body.get("name") or "").strip() or _default_job_name()
     due_at_raw = body.get("dueAt")
     due_at = parse_datetime(due_at_raw) if due_at_raw else None
 
@@ -269,18 +341,31 @@ def create_project(request: HttpRequest) -> JsonResponse:
         due_at=due_at,
         notes=body.get("notes") or "",
     )
-    _replace_project_targets(project, body.get("targets") or [])
+    targets = body.get("targets") or []
+    _replace_project_targets(project, targets)
+    if targets:
+        try:
+            _rebuild_project_from_body(project, body)
+            project.refresh_from_db()
+        except Exception:
+            pass
     return JsonResponse(_serialize_project(project), status=201)
 
 
 @require_GET
 def get_project(_request: HttpRequest, project_id: int) -> JsonResponse:
+    user = _require_director_api_user(_request)
+    if isinstance(user, JsonResponse):
+        return user
     project = get_object_or_404(Project, pk=project_id)
     return JsonResponse(_serialize_project(project))
 
 
 @require_POST
 def update_project(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     project = get_object_or_404(Project, pk=project_id)
     body = _parse_json_body(request)
     try:
@@ -293,35 +378,51 @@ def update_project(request: HttpRequest, project_id: int) -> JsonResponse:
 
 @require_POST
 def rebuild_project(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
     project = get_object_or_404(Project, pk=project_id)
     body = _parse_json_body(request)
 
     if body.get("targets") is not None:
         _replace_project_targets(project, body.get("targets") or [])
 
-    types = body.get("types")
-    if types is None:
-        types = [
-            {"typeId": target.type_id, "amount": target.quantity}
-            for target in project.targets.filter(is_final_output=True).order_by("id")
-        ]
-
-    efficiency = _build_efficiency(body)
-    build_t1, copy_bpo, produce_fuel_blocks, merge_modules = _build_flags(body)
-    manufacturing_role_bonus, manufacturing_rig_bonus, reaction_rig_bonus = _build_bonus_tuple(body)
-
-    details = planner_service.rebuild_project_plan(
-        project=project,
-        types=types,
-        efficiency=efficiency,
-        build_t1=build_t1,
-        copy_bpo=copy_bpo,
-        produce_fuel_blocks=produce_fuel_blocks,
-        merge_modules=merge_modules,
-        manufacturing_role_bonus=manufacturing_role_bonus,
-        manufacturing_rig_bonus=manufacturing_rig_bonus,
-        reaction_rig_bonus=reaction_rig_bonus,
-    )
+    details = _rebuild_project_from_body(project, body)
 
     project.refresh_from_db()
     return JsonResponse({"project": _serialize_project(project), "plannerResult": details})
+
+
+@require_GET
+def search_catalog(request: HttpRequest) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
+    query = str(request.GET.get("q") or "").strip()
+    limit = int(request.GET.get("limit") or 20)
+    if not query:
+        return JsonResponse({"items": []})
+    items = planner_service.search_producible_catalog(query, limit=max(1, min(limit, 50)))
+    return JsonResponse(
+        {
+            "items": [
+                {
+                    "typeId": int(item["typeId"]),
+                    "typeName": str(item["typeName"]),
+                    "activityId": int(item.get("activityId") or 0),
+                    "blueprintTypeId": int(item.get("blueprintTypeId") or 0),
+                    "blueprintName": str(item.get("blueprintName") or ""),
+                }
+                for item in items
+            ]
+        }
+    )
+
+
+@require_GET
+def list_projects(request: HttpRequest) -> JsonResponse:
+    user = _require_director_api_user(request)
+    if isinstance(user, JsonResponse):
+        return user
+    projects = Project.objects.order_by("-priority", "-created_at", "name")
+    return JsonResponse({"projects": [_serialize_project(project, include_plan_rows=False) for project in projects]})

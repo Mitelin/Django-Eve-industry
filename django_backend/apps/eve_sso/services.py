@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from urllib.parse import urlencode
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -88,6 +89,44 @@ class EsiTokenService:
 
     def close(self) -> None:
         self._client.close()
+
+    def build_authorization_url(self, *, redirect_uri: str, state: str, scopes: tuple[str, ...] | list[str]) -> str:
+        query = {
+            "response_type": "code",
+            "redirect_uri": redirect_uri,
+            "client_id": settings.EVE_CLIENT_ID,
+            "state": state,
+        }
+        scope_value = " ".join(str(scope).strip() for scope in scopes if str(scope).strip())
+        if scope_value:
+            query["scope"] = scope_value
+        return f"{settings.EVE_AUTHORIZATION_URL}?{urlencode(query)}"
+
+    def exchange_authorization_code(self, *, code: str, redirect_uri: str) -> dict[str, Any]:
+        if not settings.EVE_CLIENT_ID or not settings.EVE_CLIENT_SECRET:
+            raise TokenRefreshError("EVE_CLIENT_ID / EVE_CLIENT_SECRET missing")
+
+        auth = base64.b64encode(
+            f"{settings.EVE_CLIENT_ID}:{settings.EVE_CLIENT_SECRET}".encode("utf-8")
+        ).decode("ascii")
+        response = self._client.post(
+            settings.EVE_TOKEN_API,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+                "Authorization": f"Basic {auth}",
+            },
+        )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise TokenRefreshError(f"Authorization code exchange failed: {response.status_code}") from exc
+        return response.json()
 
     def upsert_token_response(self, token_payload: dict[str, Any], purpose: str = "full") -> EsiToken:
         parsed = parse_access_token(token_payload["access_token"])

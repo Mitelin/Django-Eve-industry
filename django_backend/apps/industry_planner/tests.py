@@ -13,7 +13,7 @@ from django.test import SimpleTestCase, TestCase
 
 from apps.industry_planner.models import PlanJob, PlanMaterial, Project, ProjectTarget
 from apps.industry_planner.shadow import generate_shadow_planner_report
-from apps.industry_planner.services import IndustryPlannerService, add_material, resolve_material_multipliers
+from apps.industry_planner.services import IndustryPlannerService, add_job, add_material, resolve_material_multipliers
 
 
 _LEGACY_ROOT = Path(__file__).resolve().parents[3] / "ZAMEK"
@@ -358,16 +358,91 @@ def run_legacy_ore_details(repository: _FakePlannerRepository, type_name: str) -
 
 
 class PlannerServiceTests(SimpleTestCase):
-    def test_resolve_material_multipliers_preserves_legacy_defaults(self) -> None:
-        manufacturing_role_bonus, manufacturing_rig_bonus, reaction_rig_bonus = resolve_material_multipliers(
-            industry_structure_type="athanor",
-            industry_rig="T2",
-            reaction_rig="T1",
+    def test_resolve_material_multipliers_matches_legacy_profiles(self) -> None:
+        profiles = [
+            ({"industry_structure_type": None, "industry_rig": None, "reaction_rig": None}, (0.99, 0.958, 0.974)),
+            ({"industry_structure_type": "station", "industry_rig": None, "reaction_rig": None}, (1.0, 1.0, 0.974)),
+            ({"industry_structure_type": "athanor", "industry_rig": None, "reaction_rig": None}, (0.99, 0.958, 0.974)),
+            ({"industry_structure_type": "athanor", "industry_rig": "T1", "reaction_rig": "T1"}, (0.99, 0.958, 0.986)),
+            ({"industry_structure_type": "athanor", "industry_rig": "T2", "reaction_rig": "T2"}, (0.99, 0.9496, 0.974)),
+        ]
+
+        for profile, expected in profiles:
+            with self.subTest(profile=profile):
+                self.assertEqual(resolve_material_multipliers(**profile), expected)
+
+    def test_add_job_preserves_lowest_level_like_legacy(self) -> None:
+        result = {"jobs": []}
+        product = {
+            "blueprintTypeId": 100,
+            "blueprint": "Test Blueprint",
+            "time": 100,
+            "quantity": 1,
+            "productTypeID": 200,
+            "product": "Test Product",
+            "probability": None,
+            "maxProductionLimit": 10,
+        }
+
+        add_job(result, 1, 5, "Manufacturing", product, 0, [], False)
+        add_job(result, 1, 2, "Manufacturing", product, 0, [], False)
+        add_job(result, 1, 7, "Manufacturing", product, 0, [], False)
+
+        self.assertEqual(result["jobs"][0]["level"], 2)
+
+    def test_add_job_keeps_distinct_invention_outputs_like_legacy(self) -> None:
+        result = {"jobs": []}
+        common = {
+            "blueprintTypeId": 501,
+            "blueprint": "Inferno Cruise Missile Blueprint",
+            "time": 60,
+            "quantity": 10,
+            "probability": None,
+            "maxProductionLimit": 300,
+        }
+
+        add_job(
+            result,
+            1200,
+            9,
+            "Invention",
+            {**common, "productTypeID": 601, "product": "Inferno Fury Cruise Missile Blueprint"},
+            0,
+            [],
+            False,
+        )
+        add_job(
+            result,
+            1200,
+            9,
+            "Invention",
+            {**common, "productTypeID": 602, "product": "Inferno Precision Cruise Missile Blueprint"},
+            0,
+            [],
+            False,
         )
 
-        self.assertEqual(manufacturing_role_bonus, 0.99)
-        self.assertEqual(manufacturing_rig_bonus, 0.958)
-        self.assertEqual(reaction_rig_bonus, 0.986)
+        self.assertEqual(len(result["jobs"]), 2)
+        self.assertEqual({job["productTypeID"] for job in result["jobs"]}, {601, 602})
+
+    def test_capital_part_me8_matches_legacy_default_profile(self) -> None:
+        result = {"materials": []}
+        bonuses = resolve_material_multipliers(None, None, None)
+
+        quantity = add_material(
+            result,
+            amount=1,
+            level=1,
+            product={"quantity": 1},
+            material={"materialTypeID": 1, "material": "Capital Part", "quantity": 500, "activityId": 1},
+            bp_me=8,
+            is_advanced=False,
+            manufacturing_role_bonus=bonuses[0],
+            manufacturing_rig_bonus=bonuses[1],
+            reaction_rig_bonus=bonuses[2],
+        )
+
+        self.assertEqual(quantity, 437)
 
     def test_add_material_rounding_manufacturing_me(self) -> None:
         result = {"materials": []}
@@ -378,6 +453,29 @@ class PlannerServiceTests(SimpleTestCase):
 
         expected = math.ceil((10 * 37 * ((100.0 - 10) / 100.0) * 0.99 * 0.958) / 10)
         self.assertEqual(quantity, expected)
+
+    def test_add_material_triples_datacores_like_legacy(self) -> None:
+        result = {"materials": []}
+        product = {"quantity": 1}
+        material = {
+            "materialTypeID": 1,
+            "material": "Datacore - Mechanical Engineering",
+            "quantity": 2,
+            "activityId": 8,
+        }
+
+        quantity = add_material(
+            result,
+            amount=1,
+            level=1,
+            product=product,
+            material=material,
+            bp_me=0,
+            is_advanced=False,
+        )
+
+        self.assertEqual(quantity, 6)
+        self.assertEqual(result["materials"][0]["quantity"], 6)
 
     def test_get_blueprint_details_recurses_into_intermediate_blueprints(self) -> None:
         repository = build_recursive_repository()
@@ -781,9 +879,9 @@ class PlannerRouteTests(SimpleTestCase):
             copy_bpo=True,
             produce_fuel_blocks=True,
             merge_modules=False,
-            manufacturing_role_bonus=1.0,
-            manufacturing_rig_bonus=1.0,
-            reaction_rig_bonus=1.0,
+            manufacturing_role_bonus=0.99,
+            manufacturing_rig_bonus=0.958,
+            reaction_rig_bonus=0.974,
         )
 
     def test_calculate_route_returns_legacy_plaintext_error(self) -> None:
@@ -864,16 +962,19 @@ class PlannerPersistenceTests(TestCase):
 
 
 class PlannerProjectRouteTests(TestCase):
-    def test_create_project_persists_targets(self) -> None:
-        user = get_user_model().objects.create_user(username="route-planner", password="x")
+    def setUp(self) -> None:
+        self.user = get_user_model().objects.create_user(username="route-planner", password="x")
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        self.client.force_login(self.user)
 
+    def test_create_project_persists_targets(self) -> None:
         response = self.client.post(
             "/api/planner/projects/create",
             data={
                 "name": "Route Project",
                 "priority": 5,
                 "status": "draft",
-                "createdByUserId": user.id,
                 "notes": "pilot",
                 "targets": [
                     {"typeId": 100, "quantity": 3, "isFinalOutput": True},
@@ -890,10 +991,39 @@ class PlannerProjectRouteTests(TestCase):
         self.assertEqual(len(payload["targets"]), 2)
         self.assertEqual(Project.objects.count(), 1)
         self.assertEqual(ProjectTarget.objects.count(), 2)
+        self.assertEqual(Project.objects.get().created_by_id, self.user.id)
+
+    def test_create_project_defaults_to_dated_name_when_blank(self) -> None:
+        response = self.client.post(
+            "/api/planner/projects/create",
+            data={
+                "name": "   ",
+                "targets": [{"typeId": 100, "quantity": 1, "isFinalOutput": True}],
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json()["name"].startswith("Job "))
+
+    def test_create_project_rebuilds_plan_when_targets_are_present(self) -> None:
+        with patch("apps.industry_planner.views._rebuild_project_from_body") as rebuild_mock:
+            rebuild_mock.return_value = {"jobs": [], "materials": []}
+
+            response = self.client.post(
+                "/api/planner/projects/create",
+                data={
+                    "name": "Autoplan Project",
+                    "targets": [{"typeId": 100, "quantity": 2, "isFinalOutput": True}],
+                },
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 201)
+        rebuild_mock.assert_called_once()
 
     def test_rebuild_project_uses_targets_when_types_missing(self) -> None:
-        user = get_user_model().objects.create_user(username="route-planner-2", password="x")
-        project = Project.objects.create(name="Project API", created_by=user)
+        project = Project.objects.create(name="Project API", created_by=self.user)
         ProjectTarget.objects.create(project=project, type_id=100, quantity=3, is_final_output=True)
 
         service = IndustryPlannerService(repository=build_recursive_repository())
@@ -919,8 +1049,7 @@ class PlannerProjectRouteTests(TestCase):
         self.assertEqual(PlanMaterial.objects.filter(project=project).count(), 6)
 
     def test_update_project_changes_fields_and_targets(self) -> None:
-        user = get_user_model().objects.create_user(username="route-planner-4", password="x")
-        project = Project.objects.create(name="Before Update", priority=2, status="draft", created_by=user, notes="old")
+        project = Project.objects.create(name="Before Update", priority=2, status="draft", created_by=self.user, notes="old")
         ProjectTarget.objects.create(project=project, type_id=100, quantity=3, is_final_output=True)
 
         response = self.client.post(
@@ -944,8 +1073,7 @@ class PlannerProjectRouteTests(TestCase):
         self.assertEqual(list(project.targets.values_list("type_id", flat=True)), [200])
 
     def test_update_project_rejects_blank_name(self) -> None:
-        user = get_user_model().objects.create_user(username="route-planner-5", password="x")
-        project = Project.objects.create(name="Keep Me", created_by=user)
+        project = Project.objects.create(name="Keep Me", created_by=self.user)
 
         response = self.client.post(
             f"/api/planner/projects/{project.id}/update",
@@ -957,8 +1085,7 @@ class PlannerProjectRouteTests(TestCase):
         self.assertEqual(response.json(), {"error": "name cannot be blank"})
 
     def test_get_project_returns_persisted_plan(self) -> None:
-        user = get_user_model().objects.create_user(username="route-planner-3", password="x")
-        project = Project.objects.create(name="Project Detail", created_by=user)
+        project = Project.objects.create(name="Project Detail", created_by=self.user)
         service = IndustryPlannerService(repository=build_recursive_repository())
         service.rebuild_project_plan(
             project=project,
@@ -978,9 +1105,95 @@ class PlannerProjectRouteTests(TestCase):
         self.assertEqual(len(payload["jobs"]), 2)
         self.assertEqual(len(payload["materials"]), 3)
 
+    def test_get_project_returns_readable_plan_type_names(self) -> None:
+        project = Project.objects.create(name="Readable Detail", created_by=self.user)
+        plan_job = PlanJob.objects.create(
+            project=project,
+            activity_id=1,
+            blueprint_type_id=100,
+            product_type_id=200,
+            runs=2,
+            expected_duration_s=120,
+            level=1,
+            is_advanced=False,
+            params_hash="hash-readable",
+        )
+        PlanMaterial.objects.create(
+            project=project,
+            plan_job=plan_job,
+            material_type_id=300,
+            quantity_total=7,
+            activity_id=1,
+            level=1,
+            is_input=True,
+            is_intermediate=False,
+        )
+        PlanMaterial.objects.create(
+            project=project,
+            plan_job=None,
+            material_type_id=400,
+            quantity_total=12,
+            activity_id=1,
+            level=0,
+            is_input=True,
+            is_intermediate=False,
+        )
+
+        with patch("apps.industry_planner.views.planner_service.get_type_names") as get_type_names_mock:
+            get_type_names_mock.return_value = {
+                100: "Drake Blueprint",
+                200: "Drake",
+                300: "Tritanium",
+                400: "Pyerite",
+            }
+            response = self.client.get(f"/api/planner/projects/{project.id}")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["jobs"][0]["blueprintTypeName"], "Drake Blueprint")
+        self.assertEqual(payload["jobs"][0]["productTypeName"], "Drake")
+        self.assertEqual(payload["jobs"][0]["materials"][0]["materialTypeName"], "Tritanium")
+        self.assertEqual(payload["materials"][0]["materialTypeName"], "Pyerite")
+
+    def test_search_catalog_uses_planner_search(self) -> None:
+        with patch("apps.industry_planner.views.planner_service.search_producible_catalog") as search_mock:
+            search_mock.return_value = [
+                {
+                    "typeId": 200,
+                    "typeName": "Drake",
+                    "activityId": 1,
+                    "blueprintTypeId": 100,
+                    "blueprintName": "Drake Blueprint",
+                }
+            ]
+
+            response = self.client.get("/api/planner/catalog/search?q=drake")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["typeName"], "Drake")
+        search_mock.assert_called_once_with("drake", limit=20)
+
+    def test_list_projects_orders_rush_before_newer_normal_jobs(self) -> None:
+        older_rush = Project.objects.create(name="Rush older", priority=9, created_by=self.user)
+        newer_normal = Project.objects.create(name="Normal newer", priority=3, created_by=self.user)
+
+        response = self.client.get("/api/planner/projects")
+
+        self.assertEqual(response.status_code, 200)
+        project_names = [project["name"] for project in response.json()["projects"]]
+        self.assertEqual(project_names[:2], [older_rush.name, newer_normal.name])
+
+    def test_account_only_user_cannot_manage_planner_jobs(self) -> None:
+        self.client.force_login(get_user_model().objects.create_user(username="plain-account", password="x"))
+
+        response = self.client.get("/api/planner/projects")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "Director access is required")
+
 
 class PlannerShadowReportTests(SimpleTestCase):
-    def test_generate_shadow_planner_report_matches_golden_and_legacy(self) -> None:
+    def test_generate_shadow_planner_report_matches_rewrite_goldens(self) -> None:
         report = generate_shadow_planner_report()
 
         self.assertEqual(report["planner"]["scenarioCount"], 4)

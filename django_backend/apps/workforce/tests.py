@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.test import TestCase
 from django.test.utils import override_settings
 from django.utils import timezone
@@ -199,6 +200,66 @@ class WorkforceServiceTests(TestCase):
         self.assertIsNotNone(work_item.verified_at)
         self.assertEqual(work_item.events.filter(event_type="VERIFIED_OK").count(), 1)
 
+    def test_verify_start_job_ignores_display_labels_and_matches_only_ids(self) -> None:
+        self.service.dispatch_project(self.project)
+        work_item = self.service.claim_next(user=self.user, lock_ttl=timedelta(minutes=45))
+        work_item.payload["blueprintName"] = "Manually Renamed Legacy Label"
+        work_item.payload["productName"] = "Fullerides"
+        work_item.payload["activityName"] = "Reaction Formula"
+        work_item.save(update_fields=["payload", "updated_at"])
+        work_item = self.service.mark_temp_done(work_item=work_item, actor=self.user, idempotency_key="done-id-only")
+        assigned_at = timezone.datetime.fromisoformat(work_item.payload["assignedAt"])
+        sync_run = SyncRun.objects.create(kind="jobs", corporation_id=123, status="ok", finished_at=timezone.now())
+        CorpJobSnapshot.objects.create(
+            sync_run=sync_run,
+            job_id=778,
+            activity_id=1,
+            blueprint_type_id=100,
+            product_type_id=200,
+            runs=3,
+            installer_id=self.character.eve_character_id,
+            start_date=assigned_at + timedelta(minutes=2),
+        )
+
+        verified = self.service.verify_start_job(work_item=work_item, now=assigned_at + timedelta(minutes=3))
+
+        self.assertTrue(verified)
+        work_item.refresh_from_db()
+        self.assertEqual(work_item.status, "verified")
+        self.assertEqual(work_item.events.get(event_type="VERIFIED_OK").details["matchedJobId"], 778)
+
+    def test_verify_start_job_rejects_textual_match_when_ids_do_not_match(self) -> None:
+        self.service.dispatch_project(self.project)
+        work_item = self.service.claim_next(user=self.user, lock_ttl=timedelta(minutes=45))
+        work_item.payload.update(
+            {
+                "blueprintName": "Fullerides Reaction Formula",
+                "productName": "Fullerides",
+                "activityName": "Reaction",
+            }
+        )
+        work_item.save(update_fields=["payload", "updated_at"])
+        work_item = self.service.mark_temp_done(work_item=work_item, actor=self.user, idempotency_key="done-no-text-fallback")
+        assigned_at = timezone.datetime.fromisoformat(work_item.payload["assignedAt"])
+        sync_run = SyncRun.objects.create(kind="jobs", corporation_id=123, status="ok", finished_at=timezone.now())
+        CorpJobSnapshot.objects.create(
+            sync_run=sync_run,
+            job_id=779,
+            activity_id=1,
+            blueprint_type_id=999,
+            product_type_id=998,
+            runs=3,
+            installer_id=self.character.eve_character_id,
+            start_date=assigned_at + timedelta(minutes=2),
+        )
+
+        with self.assertRaises(VerificationWindowOpen):
+            self.service.verify_start_job(work_item=work_item, now=assigned_at + timedelta(minutes=5))
+
+        work_item.refresh_from_db()
+        self.assertEqual(work_item.status, "temp_done")
+        self.assertEqual(work_item.events.filter(event_type="VERIFIED_OK").count(), 0)
+
     def test_verify_start_job_requeues_after_sla_miss(self) -> None:
         self.service.dispatch_project(self.project)
         work_item = self.service.claim_next(user=self.user, lock_ttl=timedelta(minutes=45))
@@ -214,6 +275,8 @@ class WorkforceServiceTests(TestCase):
         self.assertIsNone(work_item.assigned_to)
         self.assertEqual(work_item.events.filter(event_type="VERIFY_MISS").count(), 1)
         self.assertEqual(work_item.events.filter(event_type="REQUEUED").count(), 1)
+        self.assertEqual(work_item.events.get(event_type="VERIFY_MISS").details["assignedUserId"], self.user.id)
+        self.assertEqual(work_item.events.get(event_type="REQUEUED").details["assignedUserId"], self.user.id)
 
     def test_verify_start_job_raises_while_sla_window_open_without_match(self) -> None:
         self.service.dispatch_project(self.project)
@@ -253,6 +316,7 @@ class WorkforceServiceTests(TestCase):
         work_item.refresh_from_db()
         self.assertEqual(work_item.status, "failed")
         self.assertEqual(work_item.events.filter(event_type="ESCALATED").count(), 1)
+        self.assertEqual(work_item.events.get(event_type="ESCALATED").details["assignedUserId"], self.user.id)
 
     def test_verify_batch_reports_verified_requeued_stale_and_escalated(self) -> None:
         self.service = WorkforceService(max_attempts=1)
@@ -395,7 +459,11 @@ class WorkforceRouteTests(TestCase):
     def setUp(self) -> None:
         self.service = WorkforceService()
         self.user = get_user_model().objects.create_user(username="route-worker", password="x")
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
         self.other_user = get_user_model().objects.create_user(username="route-outsider", password="x")
+        self.worker_group, _ = Group.objects.get_or_create(name="worker")
+        self.user.groups.add(self.worker_group)
         self.character = Character.objects.create(
             user=self.user,
             eve_character_id=90000101,
@@ -410,6 +478,7 @@ class WorkforceRouteTests(TestCase):
             corporation_id=123,
             is_main=True,
         )
+        self.client.force_login(self.user)
         self.project = Project.objects.create(name="Route Workforce", priority=4, created_by=self.user)
         self.plan_job = PlanJob.objects.create(
             project=self.project,
@@ -431,7 +500,7 @@ class WorkforceRouteTests(TestCase):
 
         claim_response = self.client.post(
             "/api/work-items/claim",
-            data={"userId": self.user.id},
+            data={},
             content_type="application/json",
         )
 
@@ -443,7 +512,7 @@ class WorkforceRouteTests(TestCase):
         dispatch_response = self.client.post(f"/api/projects/{self.project.id}/dispatch")
         claim_response = self.client.post(
             "/api/work-items/claim",
-            data={"userId": self.user.id},
+            data={},
             content_type="application/json",
         )
 
@@ -452,13 +521,15 @@ class WorkforceRouteTests(TestCase):
         self.assertEqual(claim_response.json()["cutoverMode"], "assisted")
 
     def test_non_pilot_worker_routes_blocked_in_assisted_mode(self) -> None:
+        self.other_user.groups.add(self.worker_group)
         with self.settings(CUTOVER_MODE="assisted", CUTOVER_PILOT_USER_IDS=[self.user.id]):
+            self.client.force_login(self.other_user)
             response = self.client.post(
                 "/api/work-items/claim",
-                data={"userId": self.other_user.id},
+                data={},
                 content_type="application/json",
             )
-            detail_response = self.client.get(f"/api/work-items/my-active-detail?userId={self.other_user.id}")
+            detail_response = self.client.get("/api/work-items/my-active-detail")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(detail_response.status_code, 403)
@@ -466,10 +537,11 @@ class WorkforceRouteTests(TestCase):
 
     def test_pilot_worker_routes_still_allowed_in_assisted_mode(self) -> None:
         with self.settings(CUTOVER_MODE="assisted", CUTOVER_PILOT_USER_IDS=[self.user.id]):
+            self.client.force_login(self.user)
             dispatch_response = self.client.post(f"/api/projects/{self.project.id}/dispatch")
             claim_response = self.client.post(
                 "/api/work-items/claim",
-                data={"userId": self.user.id},
+                data={},
                 content_type="application/json",
             )
 
@@ -484,36 +556,12 @@ class WorkforceRouteTests(TestCase):
         self.assertEqual(home_response.status_code, 200)
         self.assertContains(home_response, "Operations Console")
         self.assertEqual(director_response.status_code, 200)
-        self.assertContains(director_response, "Director Flight Deck")
-        self.assertContains(director_response, "Observation Window")
-        self.assertContains(director_response, "Readiness Trend")
-        self.assertContains(director_response, "Cutover Preflight")
-        self.assertContains(director_response, "Preflight Snapshot History")
-        self.assertContains(director_response, "Preflight Change Since Last Stored Snapshot")
-        self.assertContains(director_response, "Recent Sign-Off Activity")
-        self.assertContains(director_response, "Role Ownership")
-        self.assertContains(director_response, "Recent Role Activity")
-        self.assertContains(director_response, "Action Guidance")
-        self.assertContains(director_response, "High Risk Only")
-        self.assertContains(director_response, "Needs Manual Attention")
-        self.assertContains(director_response, "Manual Attention Summary")
-        self.assertContains(director_response, "Run Recommended")
-        self.assertContains(director_response, "Run First Recommended")
-        self.assertContains(director_response, "Open Guidance: Wait For Verify")
-        self.assertContains(director_response, "Open Guidance: Manual Review")
-        self.assertContains(director_response, "Update Script Sign-Off")
-        self.assertContains(director_response, "Assign Cutover Role")
-        self.assertContains(director_response, "Sync Missing Role Owners")
-        self.assertContains(director_response, "Sync Missing Script Sign-Offs")
-        self.assertContains(director_response, "Bootstrap Governance")
-        self.assertContains(director_response, "Persist Evidence")
-        self.assertContains(director_response, "Recovery Actions")
-        self.assertContains(director_response, "Redispatch Project")
-        self.assertContains(director_response, "Run Verify Batch")
-        self.assertContains(director_response, "Event Provenance")
-        self.assertContains(director_response, "Recommended Events")
-        self.assertContains(director_response, "Manual Events")
-        self.assertContains(director_response, "System Events")
+        self.assertContains(director_response, "Production control")
+        self.assertContains(director_response, "Run verification")
+        self.assertContains(director_response, "Queue summary")
+        self.assertContains(director_response, "Needs attention")
+        self.assertContains(director_response, "/api/dashboard/director")
+        self.assertContains(director_response, "/api/reports/cutover/readiness")
         self.assertEqual(worker_response.status_code, 200)
         self.assertContains(worker_response, "Worker Command")
 
@@ -524,15 +572,15 @@ class WorkforceRouteTests(TestCase):
 
         temp_done_response = self.client.post(
             f"/api/work-items/{work_item.id}/temp-done",
-            data={"userId": self.user.id, "idempotencyKey": "route-key"},
+            data={"idempotencyKey": "route-key"},
             content_type="application/json",
         )
 
         self.assertEqual(temp_done_response.status_code, 200)
         self.assertEqual(temp_done_response.json()["workItem"]["status"], "temp_done")
 
-        active_response = self.client.get(f"/api/work-items/my-active?userId={self.user.id}")
-        active_detail_response = self.client.get(f"/api/work-items/my-active-detail?userId={self.user.id}")
+        active_response = self.client.get("/api/work-items/my-active")
+        active_detail_response = self.client.get("/api/work-items/my-active-detail")
 
         self.assertEqual(active_response.status_code, 200)
         self.assertEqual(active_response.json()["workItem"]["id"], work_item.id)
@@ -558,7 +606,7 @@ class WorkforceRouteTests(TestCase):
             details={"reason": "Needs manual review", "source": "manual_action"},
         )
 
-        response = self.client.get(f"/api/work-items/my-active-detail?userId={self.user.id}")
+        response = self.client.get("/api/work-items/my-active-detail")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["recentEvents"][0]["source"], "manual_action")
@@ -570,7 +618,7 @@ class WorkforceRouteTests(TestCase):
 
         release_response = self.client.post(
             f"/api/work-items/{work_item.id}/release",
-            data={"userId": self.user.id, "reason": "switch task"},
+            data={"reason": "switch task"},
             content_type="application/json",
         )
         progress_response = self.client.get(f"/api/projects/{self.project.id}/progress")
@@ -684,6 +732,24 @@ class WorkforceRouteTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()["workItems"]), 1)
+
+    def test_account_only_user_cannot_use_worker_api(self) -> None:
+        self.client.force_login(self.other_user)
+
+        response = self.client.get("/api/work-items/my-active")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "Worker access is required")
+
+    def test_worker_cannot_use_director_api(self) -> None:
+        self.user.is_staff = False
+        self.user.save(update_fields=["is_staff"])
+        self.client.force_login(self.user)
+
+        response = self.client.post("/api/work-items/verify-batch")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "Director access is required")
 
     def test_verify_batch_route_returns_batch_counts(self) -> None:
         self.service.dispatch_project(self.project)

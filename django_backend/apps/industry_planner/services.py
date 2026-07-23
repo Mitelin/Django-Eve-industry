@@ -20,6 +20,10 @@ class PlannerRepository(Protocol):
 
     def get_ore_minerals(self, type_name: str) -> list[dict[str, Any]]: ...
 
+    def search_producible_catalog(self, query: str, limit: int = 20) -> list[dict[str, Any]]: ...
+
+    def get_type_names(self, type_ids: list[int]) -> dict[int, str]: ...
+
 
 class DjangoSdeRepository:
     def __init__(self, *, connection_alias: str = "default") -> None:
@@ -36,7 +40,7 @@ class DjangoSdeRepository:
         return self._fetch_all(
             """
             SELECT
-                dur.activityId,
+                dur.activityID AS activityId,
                 bpo.typeId AS blueprintTypeId,
                 bpo.typeName AS blueprint,
                 dur.time,
@@ -68,7 +72,7 @@ class DjangoSdeRepository:
         return self._fetch_all(
             """
             SELECT
-                dur.activityId,
+                dur.activityID AS activityId,
                 bpo.typeId AS blueprintTypeId,
                 bpo.typeName AS blueprint,
                 dur.time,
@@ -100,7 +104,7 @@ class DjangoSdeRepository:
         return self._fetch_all(
             """
             SELECT
-                mat.activityId,
+                mat.activityID AS activityId,
                 mat.materialTypeID,
                 matt.typeName AS material,
                 matt.groupID AS materialGroupId,
@@ -132,6 +136,51 @@ class DjangoSdeRepository:
             [type_name],
         )
 
+    def search_producible_catalog(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        normalized = str(query or "").strip().lower()
+        if not normalized:
+            return []
+        like_value = f"%{normalized}%"
+        return self._fetch_all(
+            """
+            SELECT
+                prd.productTypeID AS typeId,
+                prdt.typeName,
+                MIN(prd.activityID) AS activityId,
+                MIN(prd.typeID) AS blueprintTypeId,
+                MIN(bpo.typeName) AS blueprintName
+            FROM industryActivityProducts prd
+            JOIN invTypes prdt ON prdt.typeID = prd.productTypeID
+            JOIN invTypes bpo ON bpo.typeID = prd.typeID
+            WHERE prd.activityID IN (1, 8, 11)
+              AND (
+                LOWER(prdt.typeName) LIKE %s
+                OR CAST(prd.productTypeID AS TEXT) = %s
+              )
+            GROUP BY prd.productTypeID, prdt.typeName
+            ORDER BY
+                CASE WHEN LOWER(prdt.typeName) = %s THEN 0 ELSE 1 END,
+                prdt.typeName ASC
+            LIMIT %s
+            """,
+            [like_value, normalized, normalized, int(limit)],
+        )
+
+    def get_type_names(self, type_ids: list[int]) -> dict[int, str]:
+        ids = [int(type_id) for type_id in type_ids]
+        if not ids:
+            return {}
+        connection = connections[self.connection_alias]
+        placeholders = ", ".join(["%s"] * len(ids))
+        query = f"SELECT typeID, typeName FROM invTypes WHERE typeID IN ({placeholders})"
+        with connection.cursor() as cursor:
+            cursor.execute(query, ids)
+            return {int(type_id): str(type_name) for type_id, type_name in cursor.fetchall()}
+
+
+def is_datacore_name(name: str | None) -> bool:
+    return str(name or "").strip().lower().startswith("datacore - ")
+
 
 def resolve_material_multipliers(
     industry_structure_type: str | None,
@@ -143,14 +192,16 @@ def resolve_material_multipliers(
 ) -> tuple[float, float, float]:
     if manufacturing_role_bonus is None:
         structure_type = (industry_structure_type or "").strip().lower()
-        manufacturing_role_bonus = 1.0 if structure_type in {"station", ""} else 0.99
+        manufacturing_role_bonus = 1.0 if structure_type == "station" else 0.99
 
     if manufacturing_rig_bonus is None:
         manufacturing_rig = (industry_rig or "").strip().upper()
-        if manufacturing_rig == "T1":
-            manufacturing_rig_bonus = 0.976
-        elif manufacturing_rig == "T2":
+        if structure_type == "station" and not manufacturing_rig:
+            manufacturing_rig_bonus = 1.0
+        elif manufacturing_rig in {"T1", ""}:
             manufacturing_rig_bonus = 0.958
+        elif manufacturing_rig == "T2":
+            manufacturing_rig_bonus = 0.9496
         else:
             manufacturing_rig_bonus = 1.0
 
@@ -158,7 +209,7 @@ def resolve_material_multipliers(
         reaction_rig_type = (reaction_rig or "").strip().upper()
         if reaction_rig_type == "T1":
             reaction_rig_bonus = 0.986
-        elif reaction_rig_type == "T2":
+        elif reaction_rig_type in {"T2", ""}:
             reaction_rig_bonus = 0.974
         else:
             reaction_rig_bonus = 1.0
@@ -180,7 +231,14 @@ def add_job(
         (
             job
             for job in result["jobs"]
-            if job["blueprintTypeId"] == blueprint_product["blueprintTypeId"] and job["type"] == job_type
+            if job["blueprintTypeId"] == blueprint_product["blueprintTypeId"]
+            and job["type"] == job_type
+            and job["productTypeID"]
+            == (
+                blueprint_product["blueprintTypeId"]
+                if job_type == "Copying"
+                else blueprint_product["productTypeID"]
+            )
         ),
         None,
     )
@@ -199,7 +257,7 @@ def add_job(
 
     if existing:
         existing["runs"] += runs
-        if existing["level"] < level:
+        if existing["level"] > level:
             existing["level"] = level
         if materials:
             for index, material in enumerate(materials):
@@ -262,6 +320,9 @@ def add_material(
         )
     else:
         quantity = int(math.ceil((amount * material["quantity"] * float(reaction_rig_bonus)) / product["quantity"]))
+
+    if is_datacore_name(material.get("material")):
+        quantity *= 3
 
     quantity_basic_manufacture = quantity if material["activityId"] == 1 and not is_advanced else 0
     quantity_advanced_manufacture = quantity if material["activityId"] == 1 and is_advanced else 0
@@ -394,6 +455,7 @@ def process_blueprint(
             )
 
             if element["activityId"] == activity_id:
+                base_quantity = element["quantity"] * (3 if is_datacore_name(element.get("material")) else 1)
                 if element.get("blueprintTypeId"):
                     add_module(
                         result,
@@ -403,11 +465,12 @@ def process_blueprint(
                         int(element["activityId"]),
                         merge_modules=merge_modules,
                     )
-                materials_job.append({"type": element["material"], "quantity": quantity, "base_quantity": element["quantity"]})
+                materials_job.append({"type": element["material"], "quantity": quantity, "base_quantity": base_quantity})
             else:
+                base_quantity = element["quantity"] * (3 if is_datacore_name(element.get("material")) else 1)
                 if element.get("blueprintTypeId"):
                     add_module(result, quantity, 11, int(element["blueprintTypeId"]), 1, merge_modules=merge_modules)
-                materials_copy.append({"type": element["material"], "quantity": quantity, "base_quantity": element["quantity"]})
+                materials_copy.append({"type": element["material"], "quantity": quantity, "base_quantity": base_quantity})
 
     if add_copy_job:
         copy_element = {
@@ -578,6 +641,16 @@ class IndustryPlannerService:
 
     def get_ore_details(self, type_name: str) -> list[dict[str, Any]]:
         return self.repository.get_ore_minerals(type_name)
+
+    def search_producible_catalog(self, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        if not hasattr(self.repository, "search_producible_catalog"):
+            return []
+        return self.repository.search_producible_catalog(query, limit=limit)
+
+    def get_type_names(self, type_ids: list[int]) -> dict[int, str]:
+        if not hasattr(self.repository, "get_type_names"):
+            return {}
+        return self.repository.get_type_names(type_ids)
 
     def rebuild_project_plan(
         self,

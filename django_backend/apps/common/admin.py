@@ -1,6 +1,16 @@
 from django.contrib import admin
 
-from apps.common.models import CutoverRoleAssignment, CutoverRoleEvent, ReportSnapshot, ScriptSignoff, ScriptSignoffEvent
+from apps.common.models import (
+    CutoverRoleAssignment,
+    CutoverRoleEvent,
+    ReportSnapshot,
+    RollbackEvidence,
+    RollbackEvidenceEvent,
+    SdeImportRun,
+    SdeImportState,
+    ScriptSignoff,
+    ScriptSignoffEvent,
+)
 
 
 @admin.register(ReportSnapshot)
@@ -35,3 +45,30 @@ class CutoverRoleEventAdmin(admin.ModelAdmin):
     list_display = ("assignment", "previous_assigned_to", "new_assigned_to", "changed_by", "effective_at")
     list_filter = ("effective_at",)
     search_fields = ("assignment__role_name", "changed_by", "notes")
+
+
+@admin.register(RollbackEvidence)
+class RollbackEvidenceAdmin(admin.ModelAdmin):
+    list_display = ("evidence_type", "evidence_date", "recorded_by", "updated_at")
+    list_filter = ("evidence_type", "evidence_date")
+    search_fields = ("evidence_type", "recorded_by", "notes")
+
+
+@admin.register(RollbackEvidenceEvent)
+class RollbackEvidenceEventAdmin(admin.ModelAdmin):
+    list_display = ("evidence", "previous_evidence_date", "new_evidence_date", "changed_by", "effective_at")
+    list_filter = ("evidence__evidence_type", "effective_at")
+    search_fields = ("evidence__evidence_type", "changed_by", "notes")
+
+
+@admin.register(SdeImportState)
+class SdeImportStateAdmin(admin.ModelAdmin):
+    list_display = ("source", "current_build_number", "current_release_date", "last_checked_at", "last_imported_at")
+    search_fields = ("source", "archive_source_url", "source_filename")
+
+
+@admin.register(SdeImportRun)
+class SdeImportRunAdmin(admin.ModelAdmin):
+    list_display = ("status", "detected_build_number", "imported_build_number", "triggered_by", "created_at")
+    list_filter = ("status", "force_reimport", "created_at")
+    search_fields = ("source_url", "source_filename", "triggered_by", "notes", "error_text")

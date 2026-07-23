@@ -8,7 +8,7 @@
       "materials": [
         {
           "base_quantity": 10,
-          "quantity": 30,
+          "quantity": 29,
           "type": "Tritanium"
         },
         {
@@ -34,7 +34,7 @@
       "materials": [
         {
           "base_quantity": 5,
-          "quantity": 30,
+          "quantity": 29,
           "type": "Pyerite"
         }
       ],
@@ -55,8 +55,8 @@
       "level": 1,
       "material": "Tritanium",
       "materialTypeID": 500,
-      "quantity": 30,
-      "quantityAdvancedManufacture": 30,
+      "quantity": 29,
+      "quantityAdvancedManufacture": 29,
       "quantityAdvancedReaction": 0,
       "quantityBasicManufacture": 0,
       "quantityBasicReaction": 0
@@ -79,10 +79,10 @@
       "level": 2,
       "material": "Pyerite",
       "materialTypeID": 501,
-      "quantity": 30,
+      "quantity": 29,
       "quantityAdvancedManufacture": 0,
       "quantityAdvancedReaction": 0,
-      "quantityBasicManufacture": 30,
+      "quantityBasicManufacture": 29,
       "quantityBasicReaction": 0
     }
   ]

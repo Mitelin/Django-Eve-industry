@@ -1,0 +1,380 @@
+{% extends "workforce/base.html" %}
+
+{% block title %}Director Console{% endblock %}
+{% block nav_director %}is-active{% endblock %}
+
+{% block extra_head %}
+<style>
+    .director-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 24px;
+        align-items: end;
+        padding: 8px 0 22px;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 22px;
+    }
+    .director-header h2 { margin: 4px 0 6px; font-size: 30px; }
+    .director-header p { margin: 0; color: var(--muted); }
+    .control-button { border-radius: 6px; }
+    .control-button.primary { background: var(--cool); border-color: var(--cool); color: #07101d; font-weight: 700; }
+    .control-button.danger { border-color: rgba(255, 127, 150, 0.5); color: #ffdbe2; }
+    .ops-grid { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 18px; align-items: start; }
+    .ops-sidebar { position: sticky; top: 18px; }
+    .metric-strip { display: grid; grid-template-columns: repeat(5, minmax(110px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-bottom: 18px; }
+    .metric { background: var(--panel-strong); padding: 16px; min-height: 90px; }
+    .metric span { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    .metric strong { display: block; margin-top: 8px; font-size: 28px; }
+    .metric.is-alert strong { color: var(--bad); }
+    .project-row { width: 100%; text-align: left; border-radius: 4px; padding: 13px; }
+    .project-row.is-selected { border-color: var(--cool); background: rgba(101, 211, 199, 0.09); }
+    .project-progress { height: 5px; margin-top: 10px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+    .project-progress > span { display: block; height: 100%; background: var(--cool); }
+    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .detail-section { padding-top: 18px; border-top: 1px solid var(--line); }
+    .attention-row { border-left: 3px solid var(--warn); }
+    .attention-row.bad { border-left-color: var(--bad); }
+    .toolbar-status { min-height: 20px; color: var(--muted); font-size: 13px; }
+    details.diagnostics { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+    details.diagnostics summary { cursor: pointer; color: var(--muted); }
+    .account-admin { margin-top: 18px; }
+    .account-admin .list { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .account-card { padding: 16px; background: rgba(255, 255, 255, 0.03); }
+    .role-toggle { min-width: 132px; }
+    .role-toggle.active { border-color: rgba(101, 211, 199, 0.5); background: rgba(101, 211, 199, 0.12); color: var(--text); }
+    .role-toggle.warn { border-color: rgba(255, 207, 102, 0.4); }
+    .character-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .account-note { margin-top: 10px; font-size: 12px; color: var(--muted); }
+    .project-target-preview { display: grid; gap: 8px; margin-top: 12px; }
+    .project-target-preview-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); }
+    .project-target-preview-item strong { color: var(--text); font-size: 13px; }
+    .project-target-preview-item span { color: var(--muted); font-size: 12px; }
+    .project-target-preview-more { color: var(--muted); font-size: 12px; }
+    @media (max-width: 980px) {
+        .ops-grid, .director-header { grid-template-columns: 1fr; }
+        .ops-sidebar { position: static; }
+        .metric-strip { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 620px) {
+        .metric-strip, .detail-grid { grid-template-columns: 1fr; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<header class="director-header">
+    <div>
+        <div class="eyebrow">Workforce Operations</div>
+        <h2>Production control</h2>
+        <p>Projects, task pressure, verification and stale ESI evidence in one working view.</p>
+    </div>
+    <div class="actions">
+        <button class="control-button" type="button" id="verify-batch">Run verification</button>
+        <button class="control-button primary" type="button" id="refresh-dashboard">Refresh</button>
+    </div>
+</header>
+
+<div id="stale-banner"></div>
+<section class="metric-strip" id="queue-metrics" aria-label="Queue summary"></section>
+
+<main class="ops-grid">
+    <aside class="panel ops-sidebar">
+        <div class="title-row">
+            <h3>Projects</h3>
+            <span class="muted" id="project-count">Loading</span>
+        </div>
+        <div class="list" id="project-list"></div>
+    </aside>
+
+    <section class="panel" aria-live="polite">
+        <div class="title-row">
+            <div>
+                <div class="eyebrow">Selected Project</div>
+                <h3 id="detail-title">Project detail</h3>
+            </div>
+            <span class="pill" id="detail-status">Select a project</span>
+        </div>
+        <div class="toolbar-status" id="action-status"></div>
+        <div id="project-detail" class="stack">
+            <div class="empty">Choose a project to inspect progress and operational blockers.</div>
+        </div>
+    </section>
+</main>
+
+<section class="panel account-admin" aria-live="polite">
+    <div class="title-row">
+        <div>
+            <div class="eyebrow">Account Access</div>
+            <h3>Director role control</h3>
+        </div>
+        <span class="muted" id="account-count">Loading</span>
+    </div>
+    <p>Roles are assigned to the whole account. Linked characters only decide which EVE identities can sign into that account.</p>
+    <div class="list" id="account-access-list">
+        <div class="empty">Loading account access list...</div>
+    </div>
+</section>
+
+<details class="diagnostics">
+    <summary>Migration and cutover diagnostics</summary>
+    <p class="muted">Detailed readiness reports remain available through the reporting API and Django admin. They are intentionally outside the daily production workflow.</p>
+    <div class="actions">
+        <a class="button-link" href="/api/reports/cutover/readiness">Readiness JSON</a>
+        <a class="button-link" href="/api/reports/shadow/summary">Shadow summary JSON</a>
+        <a class="button-link" href="/admin/">Django admin</a>
+    </div>
+</details>
+
+<script>
+const state = { dashboard: null, selectedProjectId: null, accounts: [] };
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function getCookie(name) {
+    const item = document.cookie.split(';').map(value => value.trim()).find(value => value.startsWith(`${name}=`));
+    return item ? decodeURIComponent(item.slice(name.length + 1)) : "";
+}
+
+function formatAge(seconds) {
+    if (seconds === null || seconds === undefined) return "n/a";
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    return `${Math.floor(seconds / 3600)}h`;
+}
+
+function progressPercent(progress) {
+    return progress.total ? Math.round((progress.verified / progress.total) * 100) : 0;
+}
+
+async function getJson(url) {
+    const response = await fetch(url);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+}
+
+async function postJson(url, body = {}) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+}
+
+function renderMetrics(payload) {
+    const queue = payload.queueSummary;
+    const values = [
+        ['Ready', queue.readyCount, ''],
+        ['Assigned', queue.assignedCount, ''],
+        ['Awaiting verify', queue.tempDoneCount, queue.tempDoneCount ? 'is-alert' : ''],
+        ['Failed', queue.failedCount, queue.failedCount ? 'is-alert' : ''],
+        ['Stale projects', payload.staleProjectCount, payload.staleProjectCount ? 'is-alert' : ''],
+    ];
+    document.getElementById('queue-metrics').innerHTML = values.map(([label, value, tone]) =>
+        `<div class="metric ${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`
+    ).join('');
+    document.getElementById('stale-banner').innerHTML = payload.staleProjectCount
+        ? `<div class="banner" style="margin-bottom:18px;"><strong>ESI evidence is stale.</strong> ${payload.staleProjectCount} project(s) cannot be safely verified until jobs sync is refreshed.</div>`
+        : '';
+}
+
+function renderProjects(projects) {
+    document.getElementById('project-count').textContent = `${projects.length} total`;
+    const container = document.getElementById('project-list');
+    if (!projects.length) {
+        container.innerHTML = '<div class="empty">No projects yet.</div>';
+        return;
+    }
+    container.innerHTML = projects.map(project => {
+        const percent = progressPercent(project.progress);
+        return `<button type="button" class="project-row ${project.id === state.selectedProjectId ? 'is-selected' : ''}" data-project-id="${project.id}">
+            <div class="title-row"><strong>${escapeHtml(project.name)}</strong><span class="pill">P${project.priority}</span></div>
+            <div class="meta-row"><span>${percent}% verified</span><span>${project.progress.failed} failed</span>${project.staleWarning ? '<span>stale</span>' : ''}</div>
+            ${renderProjectTargetPreview(project.targets || [])}
+            <div class="project-progress"><span style="width:${percent}%"></span></div>
+        </button>`;
+    }).join('');
+    container.querySelectorAll('[data-project-id]').forEach(button => button.addEventListener('click', () => selectProject(Number(button.dataset.projectId))));
+}
+
+function renderProjectTargetPreview(targets) {
+    if (!targets.length) {
+        return '<div class="project-target-preview-more">No requested items yet.</div>';
+    }
+    const previewItems = targets.slice(0, 3).map(target => `
+        <div class="project-target-preview-item">
+            <strong>${escapeHtml(target.typeName || `Type ${target.typeId}`)}</strong>
+            <span>x${escapeHtml(target.quantity)}</span>
+        </div>
+    `).join('');
+    const remaining = targets.length - 3;
+    return `<div class="project-target-preview">${previewItems}${remaining > 0 ? `<div class="project-target-preview-more">+ ${remaining} more item(s)</div>` : ''}</div>`;
+}
+
+function renderWorkItems(items) {
+    if (!items.length) return '<div class="empty">No items need attention.</div>';
+    return items.map(item => `<div class="table-row attention-row ${item.risk?.tone === 'bad' ? 'bad' : ''}">
+        <div class="title-row"><strong>Work item ${item.id}</strong><span class="pill ${escapeHtml(item.risk?.tone || '')}">${escapeHtml(item.risk?.label || item.status)}</span></div>
+        <div class="meta-row"><span>${escapeHtml(item.risk?.reason || '')}</span><span>Attempt ${item.attempt}</span></div>
+        <div class="actions" style="margin-top:10px;">
+            ${item.status === 'temp_done' ? `<button class="control-button" data-action="verify" data-item-id="${item.id}">Verify now</button>` : ''}
+            ${item.status === 'failed' ? `<button class="control-button danger" data-action="requeue" data-item-id="${item.id}">Requeue</button>` : ''}
+        </div>
+    </div>`).join('');
+}
+
+function bindDetailActions() {
+    document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', async () => {
+        const action = button.dataset.action;
+        const itemId = button.dataset.itemId;
+        const status = document.getElementById('action-status');
+        status.textContent = action === 'verify' ? `Verifying work item ${itemId}...` : `Requeueing work item ${itemId}...`;
+        try {
+            const url = action === 'verify' ? `/api/work-items/${itemId}/director-verify` : `/api/work-items/${itemId}/director-requeue`;
+            await postJson(url, action === 'requeue' ? { reason: 'director_ui_requeue' } : {});
+            status.textContent = `Work item ${itemId} updated.`;
+            await loadDashboard(state.selectedProjectId);
+        } catch (error) {
+            status.textContent = error.message;
+        }
+    }));
+}
+
+function renderProjectDetail(payload) {
+    const project = payload.project;
+    document.getElementById('detail-title').textContent = project.name;
+    const status = document.getElementById('detail-status');
+    status.textContent = project.status;
+    status.className = `pill ${payload.staleWarning ? 'warn' : 'good'}`;
+    const progress = project.progress;
+    const workers = payload.activeWorkers.length
+        ? payload.activeWorkers.map(worker => `<div class="table-row"><strong>User ${escapeHtml(worker.userId)}</strong><div class="meta-row"><span>${worker.assignedCount} assigned</span><span>${worker.tempDoneCount} temp-done</span></div></div>`).join('')
+        : '<div class="empty">No active workers.</div>';
+    const targets = payload.targets.length
+        ? payload.targets.map(target => `<div class="table-row"><div class="title-row"><strong>${escapeHtml(target.typeName || `Type ${target.typeId}`)}</strong><span class="pill">${target.quantity}</span></div><div class="meta-row"><span>type ${target.typeId}</span>${target.isFinalOutput ? '<span>final output</span>' : '<span>linked target</span>'}</div></div>`).join('')
+        : '<div class="empty">No project targets.</div>';
+    const events = payload.recentEvents.slice(0, 8).map(event => `<div class="table-row"><div class="title-row"><strong>${escapeHtml(event.eventType)}</strong><span class="muted">${escapeHtml(event.createdAt)}</span></div><div class="meta-row"><span>${escapeHtml(event.summary || event.outcomeLabel)}</span></div></div>`).join('') || '<div class="empty">No events.</div>';
+    document.getElementById('project-detail').innerHTML = `
+        ${payload.staleWarning ? '<div class="banner">Verification is blocked by stale jobs evidence for this project.</div>' : ''}
+        <div class="metric-strip">
+            <div class="metric"><span>Total</span><strong>${progress.total}</strong></div>
+            <div class="metric"><span>Ready</span><strong>${progress.ready}</strong></div>
+            <div class="metric"><span>In progress</span><strong>${progress.assigned + progress.tempDone}</strong></div>
+            <div class="metric"><span>Verified</span><strong>${progress.verified}</strong></div>
+            <div class="metric ${progress.failed ? 'is-alert' : ''}"><span>Failed</span><strong>${progress.failed}</strong></div>
+        </div>
+        <div class="detail-section"><h4>Needs attention</h4><div class="list">${renderWorkItems(payload.bottlenecks.manualAttention)}</div></div>
+        <div class="detail-grid detail-section">
+            <section><h4>Targets</h4><div class="list">${targets}</div></section>
+            <section><h4>Active workers</h4><div class="list">${workers}</div></section>
+        </div>
+        <div class="detail-section"><h4>Recent activity</h4><div class="list">${events}</div></div>`;
+    bindDetailActions();
+}
+
+function renderAccountAccess(accounts) {
+    state.accounts = accounts;
+    document.getElementById('account-count').textContent = `${accounts.length} account(s)`;
+    const container = document.getElementById('account-access-list');
+    if (!accounts.length) {
+        container.innerHTML = '<div class="empty">No accounts found.</div>';
+        return;
+    }
+    container.innerHTML = accounts.map(account => {
+        const characterPills = account.characters.length
+            ? `<div class="character-pills">${account.characters.map(character => `<span class="pill ${character.isMain ? 'good' : ''}">${escapeHtml(character.name)}</span>`).join('')}</div>`
+            : '<div class="account-note">No linked characters.</div>';
+        const directorLabel = account.isDirector ? 'Director enabled' : 'Grant director';
+        const workerLabel = account.hasWorkerGroup ? 'Worker enabled' : 'Grant worker';
+        return `<div class="table-row account-card">
+            <div class="title-row"><strong>${escapeHtml(account.displayName)}</strong><span class="pill">${escapeHtml(account.username)}</span></div>
+            <div class="meta-row"><span>${escapeHtml(account.mainCharacterName || 'No main character')}</span><span>${escapeHtml(account.linkedCharacterCount)} linked</span>${account.isSuperuser ? '<span>superuser</span>' : ''}</div>
+            ${characterPills}
+            <div class="actions" style="margin-top: 14px;">
+                <button type="button" class="role-toggle ${account.hasWorkerGroup ? 'active' : 'warn'}" data-account-id="${account.id}" data-role="worker" data-next-value="${account.hasWorkerGroup ? 'false' : 'true'}" ${account.canEditWorker ? '' : 'disabled'}>${escapeHtml(workerLabel)}</button>
+                <button type="button" class="role-toggle ${account.isDirector ? 'active' : ''}" data-account-id="${account.id}" data-role="director" data-next-value="${account.isDirector ? 'false' : 'true'}" ${account.canEditDirector ? '' : 'disabled'}>${escapeHtml(directorLabel)}</button>
+            </div>
+            ${!account.canEditDirector ? '<div class="account-note">Own account and superuser director access cannot be removed here.</div>' : ''}
+        </div>`;
+    }).join('');
+    bindAccountRoleActions();
+}
+
+async function loadAccountAccess() {
+    const payload = await getJson('/api/accounts/access');
+    renderAccountAccess(payload.accounts || []);
+}
+
+function bindAccountRoleActions() {
+    document.querySelectorAll('[data-role]').forEach(button => button.addEventListener('click', async () => {
+        const accountId = Number(button.dataset.accountId);
+        const role = button.dataset.role;
+        const nextValue = button.dataset.nextValue === 'true';
+        const status = document.getElementById('action-status');
+        status.textContent = `${nextValue ? 'Granting' : 'Removing'} ${role} access for account ${accountId}...`;
+        try {
+            await postJson(`/api/accounts/${accountId}/roles`, { [role]: nextValue });
+            await loadAccountAccess();
+            status.textContent = `Updated ${role} access for account ${accountId}.`;
+        } catch (error) {
+            status.textContent = error.message;
+        }
+    }));
+}
+
+async function selectProject(projectId) {
+    state.selectedProjectId = projectId;
+    renderProjects(state.dashboard.projects);
+    document.getElementById('project-detail').innerHTML = '<div class="empty">Loading project detail...</div>';
+    try {
+        renderProjectDetail(await getJson(`/api/projects/${projectId}/director-detail`));
+    } catch (error) {
+        document.getElementById('project-detail').innerHTML = `<div class="banner">${escapeHtml(error.message)}</div>`;
+    }
+}
+
+async function loadDashboard(preferredProjectId = null) {
+    const status = document.getElementById('action-status');
+    try {
+        const payload = await getJson('/api/dashboard/director');
+        state.dashboard = payload;
+        renderMetrics(payload);
+        const availableIds = payload.projects.map(project => project.id);
+        const nextId = availableIds.includes(preferredProjectId) ? preferredProjectId : (availableIds[0] || null);
+        state.selectedProjectId = nextId;
+        renderProjects(payload.projects);
+        if (nextId) await selectProject(nextId);
+        status.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch (error) {
+        status.textContent = error.message;
+    }
+}
+
+document.getElementById('refresh-dashboard').addEventListener('click', () => loadDashboard(state.selectedProjectId));
+document.getElementById('verify-batch').addEventListener('click', async () => {
+    const status = document.getElementById('action-status');
+    status.textContent = 'Running verification batch...';
+    try {
+        const result = await postJson('/api/work-items/verify-batch');
+        status.textContent = `Verified ${result.verified}; requeued ${result.requeued}; stale ${result.stale}; escalated ${result.escalated}.`;
+        await loadDashboard(state.selectedProjectId);
+    } catch (error) {
+        status.textContent = error.message;
+    }
+});
+
+Promise.all([loadDashboard(), loadAccountAccess()]).catch(error => {
+    document.getElementById('action-status').textContent = error.message;
+});
+</script>
+{% endblock %}

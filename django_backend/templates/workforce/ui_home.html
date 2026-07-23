@@ -37,10 +37,18 @@
     </article>
     <article class="panel">
         <h3>Worker Command</h3>
-        <p>Load a worker by user ID, claim next work, inspect instructions and materials, then release or mark temp-done.</p>
+        <p>Use your signed-in worker session to claim next work, inspect instructions and materials, then release or mark temp-done.</p>
         <div class="actions">
             <a class="button-link" href="/worker/">Open Worker Screen</a>
         </div>
     </article>
+</section>
+
+<section class="panel" style="margin-top: 24px;">
+    <h3>SDE Import Control</h3>
+    <p>Download a packaged CCP SDE archive, validate its build number, and run a full safe reimport when the archive is newer than the currently loaded SDE.</p>
+    <div class="actions">
+        <a class="button-link" href="/sde/">Open SDE Admin</a>
+    </div>
 </section>
 {% endblock %}

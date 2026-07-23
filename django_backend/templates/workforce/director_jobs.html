@@ -1,0 +1,472 @@
+{% extends "workforce/base.html" %}
+
+{% block title %}Production Jobs{% endblock %}
+{% block nav_director_jobs %}is-active{% endblock %}
+
+{% block extra_head %}
+<style>
+    .jobs-grid { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 18px; align-items: start; }
+    .jobs-sidebar { position: sticky; top: 18px; }
+    .job-row { width: 100%; text-align: left; border-radius: 14px; padding: 14px; }
+    .job-row.is-selected { border-color: var(--cool); background: rgba(101, 211, 199, 0.08); }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .field { display: grid; gap: 8px; }
+    .field.full { grid-column: 1 / -1; }
+    .field input, .field textarea, .field select { width: 100%; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,0.05); color: var(--text); }
+    .field textarea { min-height: 100px; resize: vertical; }
+    .field-inline { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,0.03); }
+    .field-inline input { width: auto; margin: 0; }
+    .catalog-results, .target-list, .job-summary { display: grid; gap: 12px; }
+    .target-row, .catalog-row { border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); padding: 14px; background: rgba(255,255,255,0.03); }
+    .job-target-preview { display: grid; gap: 8px; margin-top: 12px; }
+    .job-target-preview-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.04); color: var(--text); }
+    .job-target-preview-item strong { color: var(--text); font-size: 13px; }
+    .job-target-preview-item span { color: var(--muted); font-size: 12px; }
+    .job-target-preview-more { color: var(--muted); font-size: 12px; }
+    .pill.age-old { color: #ffdbe2; border-color: rgba(255, 127, 150, 0.45); }
+    .pill.age-mid { color: #fff0c7; border-color: rgba(255, 207, 102, 0.45); }
+    .pill.age-fresh { color: #dcfff5; border-color: rgba(101, 211, 199, 0.45); }
+    .pill.rush { color: #fff0c7; border-color: rgba(255, 207, 102, 0.45); }
+    .stack-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .split-panel { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; }
+    .search-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+    @media (max-width: 1100px) {
+        .jobs-grid, .split-panel { grid-template-columns: 1fr; }
+        .jobs-sidebar { position: static; }
+    }
+    @media (max-width: 720px) {
+        .form-grid { grid-template-columns: 1fr; }
+        .search-tools { grid-template-columns: 1fr; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="eyebrow">Director Build Desk</div>
+    <h2>Production job entry</h2>
+    <p>Create, edit and review individual production jobs. Each job is one editable manufacturing list over the existing planner engine.</p>
+    <div class="stack-actions" style="margin-top: 20px;">
+        <button type="button" id="create-new-job">Create new dated job</button>
+        <a class="button-link" href="/director/">Back to operations overview</a>
+    </div>
+</section>
+
+<main class="jobs-grid">
+    <aside class="panel jobs-sidebar">
+        <div class="title-row">
+            <h3>Jobs</h3>
+            <span class="muted" id="job-count">Loading</span>
+        </div>
+        <div class="list" id="job-list">
+            <div class="empty">Loading jobs...</div>
+        </div>
+    </aside>
+
+    <section class="panel">
+        <div class="title-row">
+            <div>
+                <div class="eyebrow">Editor</div>
+                <h3 id="editor-title">New production job</h3>
+            </div>
+            <span class="pill" id="editor-mode">draft</span>
+        </div>
+        <div class="muted" id="editor-status" style="min-height:20px; margin-bottom: 16px;"></div>
+
+        <div class="form-grid">
+            <div class="field">
+                <span>Created job label</span>
+                <div class="field-inline">
+                    <strong id="job-created-label">New dated job</strong>
+                </div>
+            </div>
+            <label class="field">
+                <span>Queue override</span>
+                <div class="field-inline">
+                    <input id="job-rush" type="checkbox">
+                    <span>Rush this job ahead of normal date ordering.</span>
+                </div>
+            </label>
+            <label class="field full">
+                <span>Notes</span>
+                <textarea id="job-notes" placeholder="Why this job exists, who asked for it, staging notes, fit context."></textarea>
+            </label>
+        </div>
+
+        <div class="detail-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line);">
+            <div class="split-panel">
+                <section>
+                    <h4>Items to build</h4>
+                    <div class="search-tools">
+                        <input id="catalog-query" type="text" placeholder="Search item, ship, rig or manufacturable output by name or type ID">
+                        <button type="button" id="search-catalog">Search</button>
+                    </div>
+                    <div class="catalog-results" id="catalog-results" style="margin-top: 14px;"></div>
+                    <div class="field full" style="margin-top: 18px;">
+                        <span>Quick paste list</span>
+                        <textarea id="bulk-lines" placeholder="One line per item, for example:&#10;5 Drake&#10;Veldspar x 3"></textarea>
+                        <div class="stack-actions">
+                            <button type="button" id="import-lines">Add parsed lines</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section>
+                    <h4>Current job contents</h4>
+                    <div class="target-list" id="target-list">
+                        <div class="empty">No items added yet.</div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <div class="detail-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line);">
+            <div class="title-row">
+                <h4>Planner summary</h4>
+                <span class="muted" id="plan-summary-text">No plan yet.</span>
+            </div>
+            <div class="job-summary" id="job-summary">
+                <div class="empty">Save a job to rebuild the planner summary.</div>
+            </div>
+        </div>
+
+        <div class="stack-actions" style="margin-top: 20px;">
+            <button type="button" id="save-job">Save job</button>
+            <button type="button" id="rebuild-job">Rebuild planner</button>
+        </div>
+    </section>
+</main>
+
+<script>
+const state = {
+    jobs: [],
+    selectedProjectId: null,
+    currentProject: null,
+    targets: [],
+};
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function getCookie(name) {
+    const item = document.cookie.split(';').map(value => value.trim()).find(value => value.startsWith(`${name}=`));
+    return item ? decodeURIComponent(item.slice(name.length + 1)) : '';
+}
+
+async function getJson(url) {
+    const response = await fetch(url);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+}
+
+async function postJson(url, body = {}) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+}
+
+function ageMeta(isoValue) {
+    if (!isoValue) return { label: 'new', css: 'age-fresh' };
+    const deltaMs = Date.now() - new Date(isoValue).getTime();
+    const days = Math.max(0, Math.floor(deltaMs / 86400000));
+    if (days >= 7) return { label: `${days}d old`, css: 'age-old' };
+    if (days >= 2) return { label: `${days}d old`, css: 'age-mid' };
+    return { label: days === 1 ? '1d old' : 'today', css: 'age-fresh' };
+}
+
+function nowLocalInputValue() {
+    const current = new Date();
+    current.setMinutes(current.getMinutes() - current.getTimezoneOffset());
+    return current.toISOString().slice(0, 16);
+}
+
+function normalizeDueInput(isoValue) {
+    if (!isoValue) return '';
+    const current = new Date(isoValue);
+    current.setMinutes(current.getMinutes() - current.getTimezoneOffset());
+    return current.toISOString().slice(0, 16);
+}
+
+function currentPayload() {
+    return {
+        priority: document.getElementById('job-rush').checked ? 9 : 3,
+        status: state.currentProject?.status || 'draft',
+        notes: document.getElementById('job-notes').value,
+        targets: state.targets.map(target => ({ typeId: target.typeId, quantity: target.quantity, isFinalOutput: true })),
+    };
+}
+
+function renderJobTargetPreview(targets) {
+    if (!targets.length) {
+        return '<div class="job-target-preview-more">No requested items yet.</div>';
+    }
+    const previewItems = targets.slice(0, 4).map(target => `
+        <div class="job-target-preview-item">
+            <strong>${escapeHtml(target.typeName || `Type ${target.typeId}`)}</strong>
+            <span>x${escapeHtml(target.quantity)}</span>
+        </div>
+    `).join('');
+    const remaining = targets.length - 4;
+    return `
+        <div class="job-target-preview">${previewItems}${remaining > 0 ? `<div class="job-target-preview-more">+ ${remaining} more item(s)</div>` : ''}</div>
+    `;
+}
+
+function renderJobs() {
+    const container = document.getElementById('job-list');
+    document.getElementById('job-count').textContent = `${state.jobs.length} total`;
+    if (!state.jobs.length) {
+        container.innerHTML = '<div class="empty">No production jobs yet.</div>';
+        return;
+    }
+    container.innerHTML = state.jobs.map(project => {
+        const age = ageMeta(project.createdAt);
+        return `<button type="button" class="job-row ${project.id === state.selectedProjectId ? 'is-selected' : ''}" data-project-id="${project.id}">
+            <div class="title-row"><strong>${escapeHtml(project.name)}</strong><div class="stack-actions">${project.priority > 3 ? '<span class="pill rush">rush</span>' : ''}<span class="pill ${age.css}">${escapeHtml(age.label)}</span></div></div>
+            <div class="meta-row"><span>${escapeHtml(project.status)}</span><span>${project.targets.length} target(s)</span><span>${project.planSummary.jobCount} plan job(s)</span></div>
+            ${renderJobTargetPreview(project.targets || [])}
+        </button>`;
+    }).join('');
+    container.querySelectorAll('[data-project-id]').forEach(button => button.addEventListener('click', () => selectProject(Number(button.dataset.projectId))));
+}
+
+function renderTargets() {
+    const container = document.getElementById('target-list');
+    if (!state.targets.length) {
+        container.innerHTML = '<div class="empty">No items added yet.</div>';
+        return;
+    }
+    container.innerHTML = state.targets.map((target, index) => `
+        <div class="target-row">
+            <div class="title-row"><strong>${escapeHtml(target.typeName || `Type ${target.typeId}`)}</strong><span class="pill">${target.typeId}</span></div>
+            <div class="meta-row"><span>${escapeHtml(target.blueprintName || '')}</span></div>
+            <div class="stack-actions" style="margin-top: 10px;">
+                <input type="number" min="1" value="${target.quantity}" data-target-quantity="${index}">
+                <button type="button" data-remove-target="${index}">Remove</button>
+            </div>
+        </div>
+    `).join('');
+    container.querySelectorAll('[data-target-quantity]').forEach(input => input.addEventListener('change', () => {
+        const index = Number(input.dataset.targetQuantity);
+        state.targets[index].quantity = Math.max(1, Number(input.value || 1));
+    }));
+    container.querySelectorAll('[data-remove-target]').forEach(button => button.addEventListener('click', () => {
+        const index = Number(button.dataset.removeTarget);
+        state.targets.splice(index, 1);
+        renderTargets();
+    }));
+}
+
+function renderSummary(project) {
+    const summary = project?.planSummary || { jobCount: 0, materialCount: 0 };
+    document.getElementById('plan-summary-text').textContent = `${summary.jobCount} plan job(s), ${summary.materialCount} material row(s)`;
+    if (!project || !project.jobs) {
+        document.getElementById('job-summary').innerHTML = '<div class="empty">Save a job to rebuild the planner summary.</div>';
+        return;
+    }
+    const jobs = project.jobs.length
+        ? project.jobs.map(job => `<div class="target-row"><div class="title-row"><strong>${escapeHtml(job.productTypeName || `Product ${job.productTypeId}`)}</strong><span class="pill">runs ${job.runs}</span></div><div class="meta-row"><span>${escapeHtml(job.blueprintTypeName || `Blueprint ${job.blueprintTypeId}`)}</span><span>activity ${job.activityId}</span><span>level ${job.level}</span></div></div>`).join('')
+        : '<div class="empty">No planner jobs generated.</div>';
+    document.getElementById('job-summary').innerHTML = jobs;
+}
+
+function fillEditor(project) {
+    state.currentProject = project;
+    state.selectedProjectId = project?.id || null;
+    document.getElementById('editor-title').textContent = project ? project.name : 'New production job';
+    document.getElementById('editor-mode').textContent = project?.status || 'draft';
+    document.getElementById('job-created-label').textContent = project?.name || 'New dated job';
+    document.getElementById('job-rush').checked = Number(project?.priority || 3) > 3;
+    document.getElementById('job-notes').value = project?.notes || '';
+    state.targets = (project?.targets || []).map(target => ({
+        typeId: target.typeId,
+        typeName: target.typeName,
+        blueprintName: target.blueprintName || '',
+        quantity: target.quantity,
+    }));
+    renderTargets();
+    renderSummary(project);
+    renderJobs();
+}
+
+async function loadJobs(preferredProjectId = null) {
+    const payload = await getJson('/api/planner/projects');
+    state.jobs = payload.projects || [];
+    renderJobs();
+    if (preferredProjectId) {
+        await selectProject(preferredProjectId);
+    }
+}
+
+async function selectProject(projectId) {
+    const payload = await getJson(`/api/planner/projects/${projectId}`);
+    fillEditor(payload);
+}
+
+async function searchCatalog(queryOverride = null) {
+    const query = (queryOverride ?? document.getElementById('catalog-query').value).trim();
+    if (!query) {
+        document.getElementById('catalog-results').innerHTML = '<div class="empty">Type something to search.</div>';
+        return;
+    }
+    const payload = await getJson(`/api/planner/catalog/search?q=${encodeURIComponent(query)}`);
+    const items = payload.items || [];
+    if (!items.length) {
+        document.getElementById('catalog-results').innerHTML = '<div class="empty">No manufacturable output matched.</div>';
+        return;
+    }
+    document.getElementById('catalog-results').innerHTML = items.map(item => `
+        <div class="catalog-row">
+            <div class="title-row"><strong>${escapeHtml(item.typeName)}</strong><span class="pill">${item.typeId}</span></div>
+            <div class="meta-row"><span>${escapeHtml(item.blueprintName || '')}</span><span>activity ${item.activityId}</span></div>
+            <div class="stack-actions" style="margin-top: 10px;">
+                <button type="button" data-add-item='${JSON.stringify(item).replaceAll("'", '&#39;')}'>Add to job</button>
+            </div>
+        </div>
+    `).join('');
+    document.querySelectorAll('[data-add-item]').forEach(button => button.addEventListener('click', () => {
+        const item = JSON.parse(button.dataset.addItem);
+        const existing = state.targets.find(target => target.typeId === item.typeId);
+        if (existing) {
+            existing.quantity += 1;
+        } else {
+            state.targets.push({ typeId: item.typeId, typeName: item.typeName, blueprintName: item.blueprintName, quantity: 1 });
+        }
+        renderTargets();
+    }));
+}
+
+function parseBulkLines() {
+    return document.getElementById('bulk-lines').value
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('[') && !line.startsWith('-'))
+        .map(line => {
+            let quantity = 1;
+            let query = line;
+            const leading = line.match(/^(\d+)\s+(.+)$/);
+            const trailing = line.match(/^(.+?)\s*x\s*(\d+)$/i);
+            if (leading) {
+                quantity = Number(leading[1]);
+                query = leading[2].trim();
+            } else if (trailing) {
+                quantity = Number(trailing[2]);
+                query = trailing[1].trim();
+            }
+            return { query, quantity: Math.max(1, quantity) };
+        });
+}
+
+async function importBulkLines() {
+    const lines = parseBulkLines();
+    const status = document.getElementById('editor-status');
+    if (!lines.length) {
+        status.textContent = 'No parsable lines found.';
+        return;
+    }
+    status.textContent = `Resolving ${lines.length} line(s)...`;
+    for (const line of lines) {
+        const payload = await getJson(`/api/planner/catalog/search?q=${encodeURIComponent(line.query)}&limit=1`);
+        const item = (payload.items || [])[0];
+        if (!item) continue;
+        const existing = state.targets.find(target => target.typeId === item.typeId);
+        if (existing) {
+            existing.quantity += line.quantity;
+        } else {
+            state.targets.push({ typeId: item.typeId, typeName: item.typeName, blueprintName: item.blueprintName, quantity: line.quantity });
+        }
+    }
+    renderTargets();
+    status.textContent = 'Parsed lines were added to the current job.';
+}
+
+async function rebuildProject(projectId) {
+    const payload = await postJson(`/api/planner/projects/${projectId}/rebuild`, {
+        moduleT1ME: 0,
+        moduleT1TE: 0,
+        buildT1: true,
+        copyBPO: false,
+        produceFuelBlocks: false,
+        mergeModules: true,
+        targets: state.targets.map(target => ({ typeId: target.typeId, quantity: target.quantity, isFinalOutput: true })),
+    });
+    state.currentProject = payload.project;
+    fillEditor(payload.project);
+}
+
+async function saveJob() {
+    const status = document.getElementById('editor-status');
+    status.textContent = 'Saving production job...';
+    const payload = currentPayload();
+    try {
+        let projectId = state.selectedProjectId;
+        if (!projectId) {
+            const created = await postJson('/api/planner/projects/create', payload);
+            projectId = created.id;
+            state.selectedProjectId = projectId;
+        } else {
+            await postJson(`/api/planner/projects/${projectId}/update`, payload);
+        }
+        await rebuildProject(projectId);
+        await loadJobs(projectId);
+        status.textContent = 'Production job saved and planner rebuilt.';
+    } catch (error) {
+        status.textContent = error.message;
+    }
+}
+
+document.getElementById('create-new-job').addEventListener('click', () => {
+    fillEditor(null);
+    document.getElementById('catalog-results').innerHTML = '<div class="empty">Search results will appear here.</div>';
+    document.getElementById('bulk-lines').value = '';
+});
+document.getElementById('search-catalog').addEventListener('click', () => searchCatalog().catch(error => {
+    document.getElementById('editor-status').textContent = error.message;
+}));
+document.getElementById('catalog-query').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        searchCatalog().catch(error => {
+            document.getElementById('editor-status').textContent = error.message;
+        });
+    }
+});
+document.getElementById('import-lines').addEventListener('click', () => importBulkLines().catch(error => {
+    document.getElementById('editor-status').textContent = error.message;
+}));
+document.getElementById('save-job').addEventListener('click', () => saveJob());
+document.getElementById('rebuild-job').addEventListener('click', async () => {
+    const status = document.getElementById('editor-status');
+    if (!state.selectedProjectId) {
+        status.textContent = 'Save the job first before rebuilding the planner.';
+        return;
+    }
+    try {
+        status.textContent = 'Rebuilding planner...';
+        await rebuildProject(state.selectedProjectId);
+        await loadJobs(state.selectedProjectId);
+        status.textContent = 'Planner rebuilt.';
+    } catch (error) {
+        status.textContent = error.message;
+    }
+});
+
+fillEditor(null);
+document.getElementById('catalog-results').innerHTML = '<div class="empty">Search results will appear here.</div>';
+loadJobs().catch(error => {
+    document.getElementById('editor-status').textContent = error.message;
+});
+</script>
+{% endblock %}

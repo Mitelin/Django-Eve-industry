@@ -78,6 +78,8 @@ Implemented:
 3. Fill or adjust DB variables in `.env`.
    - optional: set `DJANGO_ADVISORY_LOCK_NAMESPACE`
    - set `EVE_CLIENT_ID`, `EVE_CLIENT_SECRET`, `EVE_CORPORATION_ID`, `ESI_TOKEN_ENCRYPTION_KEY` when testing token flows
+   - optional: tune assisted pilot policy with `CUTOVER_PILOT_VERIFICATION_SLA_MINUTES`, `CUTOVER_PILOT_MAX_VERIFY_MISS_RATE_PERCENT`, `CUTOVER_PILOT_MAX_ESCALATED_COUNT`, and `CUTOVER_PILOT_MAX_MANUAL_INTERVENTION_COUNT`
+   - optional: enforce rollback evidence freshness with `CUTOVER_ENFORCE_ROLLBACK_EVIDENCE=1`, plus `CUTOVER_RUNBOOK_REVIEWED_AT`, `CUTOVER_ROLLBACK_TESTED_AT`, and `CUTOVER_ROLLBACK_EVIDENCE_MAX_AGE_DAYS`
    - optional: set `CUTOVER_REQUIRED_SCRIPT_SIGNOFFS` to the comma-separated Sheets scripts that must be signed off before primary mode or compatibility removal
 4. Run migrations:
    - `..\.venv\Scripts\python.exe manage.py migrate`

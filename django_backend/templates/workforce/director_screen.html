@@ -71,6 +71,14 @@
         <h4>Recent Role Activity</h4>
         <div class="list" id="cutover-role-events"></div>
     </section>
+    <section style="margin-top: 18px;">
+        <h4>Rollback Evidence</h4>
+        <div class="list" id="cutover-rollback-evidence"></div>
+    </section>
+    <section style="margin-top: 18px;">
+        <h4>Recent Rollback Activity</h4>
+        <div class="list" id="cutover-rollback-events"></div>
+    </section>
 </section>
 
 <section class="panel" style="margin-bottom: 18px;">
@@ -99,6 +107,14 @@
             <div class="list" id="cutover-pilot-expansion-blockers"></div>
         </section>
     </div>
+    <section style="margin-top: 18px;">
+        <h4>Operational Posture</h4>
+        <div class="list" id="cutover-pilot-operational"></div>
+    </section>
+    <section style="margin-top: 18px;">
+        <h4>Recommended Actions</h4>
+        <div class="list" id="cutover-pilot-actions"></div>
+    </section>
 </section>
 
 <section class="panel" style="margin-bottom: 18px;">
@@ -115,6 +131,58 @@
         <span class="muted" id="cutover-pilot-trend-label">Loading...</span>
     </div>
     <div class="list" id="cutover-pilot-trend"></div>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Phase 9 Exit</h3>
+        <span class="muted" id="cutover-phase9-label">Loading...</span>
+    </div>
+    <div class="stats" id="cutover-phase9-stats"></div>
+    <div class="grid two" style="margin-top: 18px;">
+        <section>
+            <h4>Exit Checks</h4>
+            <div class="list" id="cutover-phase9-checks"></div>
+        </section>
+        <section>
+            <h4>Exit Blockers</h4>
+            <div class="list" id="cutover-phase9-blockers"></div>
+        </section>
+    </div>
+    <section style="margin-top: 18px;">
+        <h4>Recommended Actions</h4>
+        <div class="list" id="cutover-phase9-actions"></div>
+    </section>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Phase 10 Prep</h3>
+        <span class="muted" id="cutover-phase10-label">Loading...</span>
+    </div>
+    <div class="stats" id="cutover-phase10-stats"></div>
+    <div class="grid two" style="margin-top: 18px;">
+        <section>
+            <h4>Prep Checks</h4>
+            <div class="list" id="cutover-phase10-checks"></div>
+        </section>
+        <section>
+            <h4>Prep Blockers</h4>
+            <div class="list" id="cutover-phase10-blockers"></div>
+        </section>
+    </div>
+    <section style="margin-top: 18px;">
+        <h4>Recommended Actions</h4>
+        <div class="list" id="cutover-phase10-actions"></div>
+    </section>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Phase 9 Exit History</h3>
+        <span class="muted" id="cutover-phase9-history-label">Loading...</span>
+    </div>
+    <div class="list" id="cutover-phase9-history"></div>
 </section>
 
 <section class="panel" style="margin-bottom: 18px;">
@@ -246,6 +314,37 @@
             </div>
         </div>
     </article>
+</section>
+
+<section class="panel" style="margin-bottom: 18px;">
+    <div class="title-row">
+        <h3>Record Rollback Evidence</h3>
+        <span class="muted" id="cutover-rollback-action-status">Ready</span>
+    </div>
+    <div class="stack">
+        <div class="field-row">
+            <label for="cutover-rollback-evidence-type">Evidence Type</label>
+            <select id="cutover-rollback-evidence-type">
+                <option value="runbook_review">runbook_review</option>
+                <option value="rollback_drill">rollback_drill</option>
+            </select>
+        </div>
+        <div class="field-row">
+            <label for="cutover-rollback-evidence-date">Evidence Date</label>
+            <input id="cutover-rollback-evidence-date" type="date" />
+        </div>
+        <div class="field-row">
+            <label for="cutover-rollback-recorded-by">Changed By</label>
+            <input id="cutover-rollback-recorded-by" type="text" placeholder="director" />
+        </div>
+        <div class="field-row">
+            <label for="cutover-rollback-notes">Notes</label>
+            <input id="cutover-rollback-notes" type="text" placeholder="Runbook review scope or rollback drill result" />
+        </div>
+        <div class="actions">
+            <button type="button" id="submit-rollback-evidence">Save Rollback Evidence</button>
+        </div>
+    </div>
 </section>
 
 <section class="stats" id="dashboard-stats"></section>
@@ -497,6 +596,9 @@ function getActionButtonLabel(actionItem) {
     if (actionItem.actionType === 'focusScriptSignoff') {
         return 'Open sign-off form';
     }
+    if (actionItem.actionType === 'focusRollbackEvidence') {
+        return 'Open rollback form';
+    }
     if (actionItem.actionType === 'focusShadowSync') {
         return 'Open sync panel';
     }
@@ -637,6 +739,7 @@ function renderCutoverReadiness(payload) {
         ["Pilot Users", payload.pilotUserIds.length],
         ["Shadow Incidents", payload.shadow.incidentCount],
         ["Script Sign-Offs", `${payload.scriptSignoffs.validatedCount}/${payload.scriptSignoffs.requiredCount}`],
+        ["Rollback Gate", payload.rollbackSummary?.status?.gateSatisfied ? "GO" : "HOLD"],
     ];
     document.getElementById("cutover-stats").innerHTML = cards.map(([label, value]) => `
         <div class="stat">
@@ -727,12 +830,54 @@ function renderCutoverReadiness(payload) {
         `).join("")
         : '<div class="empty">No role assignment events recorded yet.</div>';
 
+    document.getElementById("cutover-rollback-evidence").innerHTML = (payload.rollbackSummary?.items || []).length
+        ? (payload.rollbackSummary.items || []).map((item) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(item.label || item.evidenceType)}</strong>
+                    <span class="pill ${item.current ? "good" : "warn"}">${escapeHtml(item.current ? item.source : item.source === "missing" ? "missing" : "stale")}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(item.evidenceDate ? formatDate(item.evidenceDate) : "not recorded")}</span>
+                    <span>${escapeHtml(item.ageDays != null ? `${item.ageDays}d old` : "n/a")}</span>
+                    <span>${escapeHtml(item.recordedBy || "system/env")}</span>
+                </div>
+                ${item.notes ? `<div class="meta-row"><span>${escapeHtml(item.notes)}</span></div>` : ""}
+            </div>
+        `).join("")
+        : '<div class="empty">No rollback evidence recorded yet.</div>';
+
+    document.getElementById("cutover-rollback-events").innerHTML = (payload.rollbackSummary?.recentEvents || []).length
+        ? (payload.rollbackSummary.recentEvents || []).map((event) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(event.evidenceType)}</strong>
+                    <span class="pill ${event.newEvidenceDate ? "good" : "warn"}">${escapeHtml(event.newEvidenceDate || "cleared")}</span>
+                </div>
+                <div class="meta-row">
+                    <span>${escapeHtml(event.previousEvidenceDate || "unassigned")}</span>
+                    <span>${escapeHtml(event.changedBy || "system")}</span>
+                    <span>${escapeHtml(formatDate(event.effectiveAt))}</span>
+                </div>
+                ${event.notes ? `<div class="meta-row"><span>${escapeHtml(event.notes)}</span></div>` : ""}
+            </div>
+        `).join("")
+        : '<div class="empty">No rollback evidence events recorded yet.</div>';
+
     renderCutoverControls(payload);
 }
 
 function renderCutoverPilotReadiness(payload) {
     state.pilotReadiness = payload;
     const activity = payload.activitySummary || {};
+    const operational = payload.operationalSummary || {};
+    const policy = payload.policySummary || {};
+    const policyStatus = policy.status || {};
+    const policyThresholds = policy.thresholds || {};
+    const rollback = payload.rollbackSummary || {};
+    const rollbackStatus = rollback.status || {};
+    const actions = payload.recommendedActions || [];
+    const actionItems = payload.recommendedActionItems || [];
     document.getElementById('cutover-pilot-label').textContent = `${payload.mode || 'n/a'} mode · ${payload.pilotStage || 'pre_pilot'}`;
     document.getElementById('cutover-pilot-stats').innerHTML = [
         ['Pilot Start', payload.pilotStartGoNoGo ? 'GO' : 'NO-GO'],
@@ -742,6 +887,8 @@ function renderCutoverPilotReadiness(payload) {
         ['Temp Done', activity.tempDoneCount || 0],
         ['Verified', activity.verifiedOkCount || 0],
         ['Verify Miss', activity.verifyMissCount || 0],
+        ['Escalated', operational.escalatedCount || 0],
+        ['Past SLA', operational.tempDonePastSlaCount || 0],
     ].map(([label, value]) => `
         <div class="stat">
             <span>${escapeHtml(label)}</span>
@@ -789,6 +936,54 @@ function renderCutoverPilotReadiness(payload) {
             </div>
         `).join('')
         : '<div class="empty">Pilot expansion posture is clear.</div>';
+
+    document.getElementById('cutover-pilot-operational').innerHTML = [
+        ['Verification SLA', `${escapeHtml(operational.verificationSlaMinutes || 0)} minute(s)`],
+        ['Verification attempts', operational.verificationAttemptCount || 0],
+        ['Verify miss rate', `${escapeHtml(operational.verifyMissRatePercent || 0)}%`],
+        ['Verify miss threshold', `${escapeHtml(policyThresholds.maxVerifyMissRatePercent || 0)}% · ${escapeHtml(policyStatus.verifyMissRateWithinPolicy ? 'within policy' : 'breached')}`],
+        ['Director interventions', operational.directorInterventionCount || 0],
+        ['Manual interventions', operational.manualInterventionCount || 0],
+        ['Manual intervention threshold', `${escapeHtml(policyThresholds.maxManualInterventionCount || 0)} · ${escapeHtml(policyStatus.manualInterventionCountWithinPolicy ? 'within policy' : 'breached')}`],
+        ['Recommended interventions', operational.recommendedInterventionCount || 0],
+        ['Escalation threshold', `${escapeHtml(policyThresholds.maxEscalatedCount || 0)} · ${escapeHtml(policyStatus.escalatedCountWithinPolicy ? 'within policy' : 'breached')}`],
+        ['TEMP_DONE past SLA', operational.tempDonePastSlaCount || 0],
+        ['Failed open', operational.failedOpenCount || 0],
+        ['Operational incidents', operational.incidentCount || 0],
+        ['Policy gate', policyStatus.withinPolicy ? 'within policy' : 'blocked'],
+        ['Rollback evidence gate', rollbackStatus.gateSatisfied ? 'satisfied' : 'blocked'],
+        ['Runbook reviewed', rollback.runbookReviewedAt ? `${escapeHtml(rollback.runbookReviewedAt)} (${escapeHtml(rollback.runbookAgeDays ?? 'n/a')}d)` : 'missing'],
+        ['Rollback tested', rollback.rollbackTestedAt ? `${escapeHtml(rollback.rollbackTestedAt)} (${escapeHtml(rollback.rollbackTestAgeDays ?? 'n/a')}d)` : 'missing'],
+    ].map(([label, value]) => `
+        <div class="list-item">
+            <div class="title-row">
+                <strong>${escapeHtml(label)}</strong>
+                <span>${escapeHtml(value)}</span>
+            </div>
+        </div>
+    `).join('');
+
+    document.getElementById('cutover-pilot-actions').innerHTML = actions.length
+        ? actions.map((action, index) => {
+            const actionItem = actionItems[index] || {};
+            const buttonLabel = getActionButtonLabel(actionItem);
+            const buttonHtml = buttonLabel
+                ? `<button type="button" class="pilot-action-trigger" data-pilot-action-index="${index}">${escapeHtml(buttonLabel)}</button>`
+                : '';
+            return `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(action)}</strong>
+                    ${buttonHtml}
+                </div>
+            </div>
+        `;
+        }).join('')
+        : '<div class="empty">No pilot-specific actions. Pilot posture is within the configured policy.</div>';
+
+    document.querySelectorAll('[data-pilot-action-index]').forEach((node) => {
+        node.addEventListener('click', () => triggerRecommendedAction(actionItems[Number(node.dataset.pilotActionIndex)] || {}));
+    });
 }
 
 function renderCutoverPilotHistory(payload) {
@@ -798,6 +993,14 @@ function renderCutoverPilotHistory(payload) {
         ? snapshots.map((snapshot) => {
             const pilot = snapshot.payload || {};
             const activity = pilot.activitySummary || {};
+            const rollback = pilot.rollbackSummary || {};
+            const rollbackStatus = rollback.status || {};
+            const runbookLabel = rollback.runbookReviewedAt
+                ? `${rollback.runbookReviewedAt} (${rollback.runbookAgeDays ?? 'n/a'}d)`
+                : 'missing';
+            const rollbackTestLabel = rollback.rollbackTestedAt
+                ? `${rollback.rollbackTestedAt} (${rollback.rollbackTestAgeDays ?? 'n/a'}d)`
+                : 'missing';
             return `
                 <div class="list-item">
                     <div class="title-row">
@@ -811,6 +1014,14 @@ function renderCutoverPilotHistory(payload) {
                         <span>Verify miss ${escapeHtml(activity.verifyMissCount || 0)}</span>
                     </div>
                     <div class="meta-row">
+                        <span>Escalated ${escapeHtml((pilot.operationalSummary || {}).escalatedCount || 0)}</span>
+                        <span>Past SLA ${escapeHtml((pilot.operationalSummary || {}).tempDonePastSlaCount || 0)}</span>
+                        <span>Rollback gate ${escapeHtml(rollbackStatus.gateSatisfied ? 'satisfied' : 'blocked')}</span>
+                        <span>Evidence ${escapeHtml(rollbackStatus.evidenceCurrent ? 'current' : 'stale')}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Runbook ${escapeHtml(runbookLabel)}</span>
+                        <span>Rollback test ${escapeHtml(rollbackTestLabel)}</span>
                         <span>${escapeHtml(snapshot.updatedAt ? formatDate(snapshot.updatedAt) : 'n/a')}</span>
                         <span>${escapeHtml((pilot.expansionBlockers || []).length ? pilot.expansionBlockers[0] : 'Expansion posture clear')}</span>
                     </div>
@@ -824,34 +1035,222 @@ function renderCutoverPilotTrend(payload) {
     const items = payload.trend || [];
     document.getElementById('cutover-pilot-trend-label').textContent = `${items.length} point(s)`;
     document.getElementById('cutover-pilot-trend').innerHTML = items.length
-        ? items.map((item) => `
+        ? items.map((item) => {
+            const runbookLabel = item.runbookReviewedAt
+                ? `${item.runbookReviewedAt} (${item.runbookAgeDays ?? 'n/a'}d)`
+                : 'missing';
+            const rollbackTestLabel = item.rollbackTestedAt
+                ? `${item.rollbackTestedAt} (${item.rollbackTestAgeDays ?? 'n/a'}d)`
+                : 'missing';
+            return `
+                <div class="list-item">
+                    <div class="title-row">
+                        <strong>${escapeHtml(item.snapshotDate)}</strong>
+                        <span class="pill ${item.pilotExpansionGoNoGo ? 'good' : 'bad'}">${item.pilotExpansionGoNoGo ? 'expand' : 'hold'}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Stage ${escapeHtml(item.pilotStage)}</span>
+                        <span>Start ${escapeHtml(item.pilotStartGoNoGo ? 'GO' : 'NO-GO')}</span>
+                        <span>Expansion blockers ${escapeHtml(item.expansionBlockerCount)}</span>
+                        <span>Pilot users ${escapeHtml(item.pilotUserCount)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Claims ${escapeHtml(item.claimCount)}</span>
+                        <span>Temp done ${escapeHtml(item.tempDoneCount)}</span>
+                        <span>Verified ${escapeHtml(item.verifiedOkCount)}</span>
+                        <span>Verify miss ${escapeHtml(item.verifyMissCount)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Verify miss rate ${escapeHtml(item.verifyMissRatePercent)}%</span>
+                        <span>Escalated ${escapeHtml(item.escalatedCount)}</span>
+                        <span>Manual ${escapeHtml(item.manualInterventionCount)}</span>
+                        <span>Past SLA ${escapeHtml(item.tempDonePastSlaCount)}</span>
+                        <span>Failed open ${escapeHtml(item.failedOpenCount)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Policy ${escapeHtml(item.policyBlocked ? 'blocked' : 'within policy')}</span>
+                        <span>Rollback gate ${escapeHtml(item.rollbackGateSatisfied ? 'satisfied' : 'blocked')}</span>
+                        <span>Evidence ${escapeHtml(item.rollbackEvidenceCurrent ? 'current' : 'stale')}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Runbook ${escapeHtml(runbookLabel)}</span>
+                        <span>Rollback test ${escapeHtml(rollbackTestLabel)}</span>
+                    </div>
+                </div>
+            `;
+        }).join('')
+        : '<div class="empty">No pilot trend data stored yet.</div>';
+}
+
+function renderCutoverPhase9Exit(payload) {
+    const decisions = payload.decisions || {};
+    const checks = payload.checks || [];
+    const blockers = payload.blockers || [];
+    const actions = payload.recommendedActions || [];
+    const actionItems = payload.recommendedActionItems || [];
+
+    document.getElementById('cutover-phase9-label').textContent = `${payload.currentMode || 'n/a'} mode · ${payload.pilotStage || 'pre_pilot'}`;
+    document.getElementById('cutover-phase9-stats').innerHTML = [
+        ['Assisted Exit', decisions.assistedExitReady ? 'READY' : 'HOLD'],
+        ['Primary Mode', decisions.primaryModeReady ? 'READY' : 'HOLD'],
+        ['Compatibility Retirement', decisions.compatibilityRetirementReady ? 'READY' : 'HOLD'],
+        ['Blocking Failures', payload.summary?.blockingFailureCount || 0],
+        ['Recommended Actions', payload.summary?.recommendedActionCount || 0],
+    ].map(([label, value]) => `
+        <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `).join('');
+
+    document.getElementById('cutover-phase9-checks').innerHTML = checks.length
+        ? checks.map((check) => `
             <div class="list-item">
                 <div class="title-row">
-                    <strong>${escapeHtml(item.snapshotDate)}</strong>
-                    <span class="pill ${item.pilotExpansionGoNoGo ? 'good' : 'bad'}">${item.pilotExpansionGoNoGo ? 'expand' : 'hold'}</span>
+                    <strong>${escapeHtml(check.label)}</strong>
+                    <span class="pill ${check.satisfied ? 'good' : check.blocking ? 'bad' : 'warn'}">${escapeHtml(check.satisfied ? 'ok' : check.blocking ? 'blocking' : 'pending')}</span>
                 </div>
-                <div class="meta-row">
-                    <span>Stage ${escapeHtml(item.pilotStage)}</span>
-                    <span>Start ${escapeHtml(item.pilotStartGoNoGo ? 'GO' : 'NO-GO')}</span>
-                    <span>Expansion blockers ${escapeHtml(item.expansionBlockerCount)}</span>
-                    <span>Pilot users ${escapeHtml(item.pilotUserCount)}</span>
-                </div>
-                <div class="meta-row">
-                    <span>Claims ${escapeHtml(item.claimCount)}</span>
-                    <span>Temp done ${escapeHtml(item.tempDoneCount)}</span>
-                    <span>Verified ${escapeHtml(item.verifiedOkCount)}</span>
-                    <span>Verify miss ${escapeHtml(item.verifyMissCount)}</span>
-                </div>
+                ${check.detail ? `<div class="meta-row"><span>${escapeHtml(check.detail)}</span></div>` : ''}
             </div>
         `).join('')
-        : '<div class="empty">No pilot trend data stored yet.</div>';
+        : '<div class="empty">No exit checks available.</div>';
+
+    document.getElementById('cutover-phase9-blockers').innerHTML = blockers.length
+        ? blockers.map((blocker) => `
+            <div class="list-item">
+                <strong>${escapeHtml(blocker)}</strong>
+            </div>
+        `).join('')
+        : '<div class="empty">No exit blockers. Phase 9 can close cleanly.</div>';
+
+    document.getElementById('cutover-phase9-actions').innerHTML = actions.length
+        ? actions.map((action, index) => {
+            const actionItem = actionItems[index] || {};
+            const buttonLabel = getActionButtonLabel(actionItem);
+            const buttonHtml = buttonLabel
+                ? `<button type="button" class="phase9-action-trigger" data-phase9-action-index="${index}">${escapeHtml(buttonLabel)}</button>`
+                : '';
+            return `
+                <div class="list-item">
+                    <div class="title-row">
+                        <strong>${escapeHtml(action)}</strong>
+                        ${buttonHtml}
+                    </div>
+                </div>
+            `;
+        }).join('')
+        : '<div class="empty">No exit actions pending.</div>';
+
+    document.querySelectorAll('[data-phase9-action-index]').forEach((node) => {
+        node.addEventListener('click', () => triggerRecommendedAction(actionItems[Number(node.dataset.phase9ActionIndex)] || {}));
+    });
+}
+
+function renderCutoverPhase10Prep(payload) {
+    const decisions = payload.decisions || {};
+    const checks = payload.checks || [];
+    const blockers = payload.blockers || [];
+    const actions = payload.recommendedActions || [];
+    const actionItems = payload.recommendedActionItems || [];
+
+    document.getElementById('cutover-phase10-label').textContent = `${payload.currentMode || 'n/a'} mode · compatibility ${payload.compatibilityMode ? 'on' : 'off'}`;
+    document.getElementById('cutover-phase10-stats').innerHTML = [
+        ['Enter Primary', decisions.canEnterPrimaryMode ? 'READY' : 'HOLD'],
+        ['Disable Compatibility', decisions.canDisableCompatibilityMode ? 'READY' : 'HOLD'],
+        ['Legacy Compatibility Required', decisions.requiresLegacyCompatibility ? 'YES' : 'NO'],
+        ['Blocking Failures', payload.summary?.blockingFailureCount || 0],
+        ['Recommended Actions', payload.summary?.recommendedActionCount || 0],
+    ].map(([label, value]) => `
+        <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `).join('');
+
+    document.getElementById('cutover-phase10-checks').innerHTML = checks.length
+        ? checks.map((check) => `
+            <div class="list-item">
+                <div class="title-row">
+                    <strong>${escapeHtml(check.label)}</strong>
+                    <span class="pill ${check.satisfied ? 'good' : check.blocking ? 'bad' : 'warn'}">${escapeHtml(check.satisfied ? 'ok' : check.blocking ? 'blocking' : 'pending')}</span>
+                </div>
+                ${check.detail ? `<div class="meta-row"><span>${escapeHtml(check.detail)}</span></div>` : ''}
+            </div>
+        `).join('')
+        : '<div class="empty">No phase 10 prep checks available.</div>';
+
+    document.getElementById('cutover-phase10-blockers').innerHTML = blockers.length
+        ? blockers.map((blocker) => `
+            <div class="list-item">
+                <strong>${escapeHtml(blocker)}</strong>
+            </div>
+        `).join('')
+        : '<div class="empty">No phase 10 blockers. Primary mode can proceed.</div>';
+
+    document.getElementById('cutover-phase10-actions').innerHTML = actions.length
+        ? actions.map((action, index) => {
+            const actionItem = actionItems[index] || {};
+            const buttonLabel = getActionButtonLabel(actionItem);
+            const buttonHtml = buttonLabel
+                ? `<button type="button" class="phase10-action-trigger" data-phase10-action-index="${index}">${escapeHtml(buttonLabel)}</button>`
+                : '';
+            return `
+                <div class="list-item">
+                    <div class="title-row">
+                        <strong>${escapeHtml(action)}</strong>
+                        ${buttonHtml}
+                    </div>
+                </div>
+            `;
+        }).join('')
+        : '<div class="empty">No phase 10 actions pending.</div>';
+
+    document.querySelectorAll('[data-phase10-action-index]').forEach((node) => {
+        node.addEventListener('click', () => triggerRecommendedAction(actionItems[Number(node.dataset.phase10ActionIndex)] || {}));
+    });
+}
+
+function renderCutoverPhase9ExitHistory(payload) {
+    const snapshots = payload.snapshots || [];
+    document.getElementById('cutover-phase9-history-label').textContent = `${snapshots.length} snapshot(s)`;
+    document.getElementById('cutover-phase9-history').innerHTML = snapshots.length
+        ? snapshots.map((snapshot) => {
+            const phase9 = snapshot.payload || {};
+            const decisions = phase9.decisions || {};
+            const summary = phase9.summary || {};
+            return `
+                <div class="list-item">
+                    <div class="title-row">
+                        <strong>${escapeHtml(snapshot.snapshotDate)}</strong>
+                        <span class="pill ${snapshot.goNoGo ? 'good' : 'bad'}">${escapeHtml(snapshot.goNoGo ? 'primary ready' : 'hold')}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Mode ${escapeHtml(phase9.currentMode || 'n/a')}</span>
+                        <span>Pilot ${escapeHtml(phase9.pilotStage || 'pre_pilot')}</span>
+                        <span>Blocking failures ${escapeHtml(summary.blockingFailureCount || 0)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Assisted exit ${escapeHtml(decisions.assistedExitReady ? 'ready' : 'hold')}</span>
+                        <span>Primary mode ${escapeHtml(decisions.primaryModeReady ? 'ready' : 'hold')}</span>
+                        <span>Compatibility ${escapeHtml(decisions.compatibilityRetirementReady ? 'ready' : 'hold')}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>${escapeHtml(snapshot.updatedAt ? formatDate(snapshot.updatedAt) : 'n/a')}</span>
+                        <span>${escapeHtml((phase9.blockers || []).length ? phase9.blockers[0] : 'No exit blockers')}</span>
+                    </div>
+                </div>
+            `;
+        }).join('')
+        : '<div class="empty">No Phase 9 exit snapshots stored yet.</div>';
 }
 
 function renderCutoverControls(payload) {
     const scriptSelect = document.getElementById('script-signoff-name');
     const roleSelect = document.getElementById('cutover-role-name');
+    const rollbackSelect = document.getElementById('cutover-rollback-evidence-type');
     const selectedScript = scriptSelect.value;
     const selectedRole = roleSelect.value;
+    const selectedRollbackEvidence = rollbackSelect.value;
 
     scriptSelect.innerHTML = (payload.scriptSignoffs.items || []).map((item) => `
         <option value="${escapeHtml(item.scriptName)}">${escapeHtml(item.scriptName)}</option>
@@ -866,6 +1265,13 @@ function renderCutoverControls(payload) {
     if ((payload.roleAssignments.items || []).some((item) => item.roleName === selectedRole)) {
         roleSelect.value = selectedRole;
     }
+
+    rollbackSelect.innerHTML = (payload.rollbackSummary?.items || []).map((item) => `
+        <option value="${escapeHtml(item.evidenceType)}">${escapeHtml(item.evidenceType)}</option>
+    `).join('');
+    if ((payload.rollbackSummary?.items || []).some((item) => item.evidenceType === selectedRollbackEvidence)) {
+        rollbackSelect.value = selectedRollbackEvidence;
+    }
 }
 
 function renderCutoverHistory(payload) {
@@ -875,6 +1281,8 @@ function renderCutoverHistory(payload) {
         ? snapshots.map((snapshot) => {
             const cutover = snapshot.payload || {};
             const signoffs = cutover.scriptSignoffs || {};
+            const rollback = cutover.rollbackSummary || {};
+            const rollbackStatus = rollback.status || {};
             return `
                 <div class="list-item">
                     <div class="title-row">
@@ -885,6 +1293,11 @@ function renderCutoverHistory(payload) {
                         <span>Mode ${escapeHtml(cutover.mode || "n/a")}</span>
                         <span>Incidents ${escapeHtml(snapshot.incidentCount)}</span>
                         <span>Sign-offs ${escapeHtml(`${signoffs.validatedCount || 0}/${signoffs.requiredCount || 0}`)}</span>
+                        <span>Rollback ${escapeHtml(rollbackStatus.gateSatisfied ? 'satisfied' : 'blocked')}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Runbook ${escapeHtml(rollback.runbookReviewedAt || 'missing')}</span>
+                        <span>Rollback drill ${escapeHtml(rollback.rollbackTestedAt || 'missing')}</span>
                     </div>
                     <div class="meta-row">
                         <span>${escapeHtml(snapshot.updatedAt ? formatDate(snapshot.updatedAt) : "n/a")}</span>
@@ -912,6 +1325,11 @@ function renderCutoverTrend(payload) {
                     <span>Blockers ${escapeHtml(item.blockerCount)}</span>
                     <span>Incidents ${escapeHtml(item.incidentCount)}</span>
                 </div>
+                <div class="meta-row">
+                    <span>Rollback ${escapeHtml(item.rollbackGateSatisfied ? 'satisfied' : 'blocked')}</span>
+                    <span>Runbook ${escapeHtml(item.runbookReviewedAt || 'missing')}</span>
+                    <span>Rollback drill ${escapeHtml(item.rollbackTestedAt || 'missing')}</span>
+                </div>
             </div>
         `).join("")
         : '<div class="empty">No cutover trend data stored yet.</div>';
@@ -922,6 +1340,9 @@ function renderCutoverPreflight(payload) {
     const deltas = payload.deltasVsLatestSnapshot || {};
     const actions = payload.recommendedActions || [];
     const actionItems = payload.recommendedActionItems || [];
+    const pilot = payload.pilot || {};
+    const rollback = payload.rollbackSummary || {};
+    const rollbackStatus = rollback.status || {};
     const latestStoredPreflight = payload.latestStoredPreflightSnapshot;
     const workforceProvenance = current.workforceProvenance || { total: 0, recommended: 0, manual: 0, system: 0 };
     document.getElementById("cutover-preflight-label").textContent = latestStoredPreflight
@@ -934,6 +1355,12 @@ function renderCutoverPreflight(payload) {
         ["Blockers", current.blockerCount || 0],
         ["Preflight Blockers", current.preflightBlockerCount || 0],
         ["Incidents", current.incidentCount || 0],
+        ["Pilot Stage", current.pilotStage || pilot.pilotStage || 'pre_pilot'],
+        ["Pilot Expansion", (current.pilotStage || pilot.pilotStage || 'pre_pilot') === 'pre_pilot' ? 'pending' : ((current.pilotExpansionGoNoGo ?? pilot.pilotExpansionGoNoGo) ? 'GO' : 'NO-GO')],
+        ["Pilot Policy", (current.pilotPolicyBlocked ?? pilot.policyBlocked) ? 'blocked' : 'within policy'],
+        ["Pilot Incidents", current.pilotIncidentCount ?? pilot.incidentCount ?? 0],
+        ["Rollback Gate", rollbackStatus.gateSatisfied ? 'satisfied' : 'blocked'],
+        ["Rollback Drill", rollback.rollbackTestedAt ? `${rollback.rollbackTestedAt}` : 'missing'],
         ["Recommended", workforceProvenance.recommended || 0],
         ["Manual", workforceProvenance.manual || 0],
         ["System", workforceProvenance.system || 0],
@@ -1020,6 +1447,14 @@ function focusScriptSignoffAction(actionItem) {
         : 'Ready to update critical script';
 }
 
+function focusRollbackEvidenceAction(actionItem) {
+    const evidenceType = actionItem.targetEvidenceType || 'runbook_review';
+    document.getElementById('cutover-rollback-evidence-type').value = evidenceType;
+    document.getElementById('cutover-rollback-evidence-date').focus();
+    document.getElementById('cutover-rollback-evidence-date').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById('cutover-rollback-action-status').textContent = `Ready to update ${evidenceType}`;
+}
+
 function triggerRecommendedAction(actionItem) {
     if (!actionItem || !actionItem.actionType) {
         return;
@@ -1056,6 +1491,10 @@ function triggerRecommendedAction(actionItem) {
         focusScriptSignoffAction(actionItem);
         return;
     }
+    if (actionItem.actionType === 'focusRollbackEvidence') {
+        focusRollbackEvidenceAction(actionItem);
+        return;
+    }
     if (actionItem.actionType === 'manual') {
         renderManualGuidance(actionItem);
     }
@@ -1068,6 +1507,8 @@ function renderCutoverPreflightHistory(payload) {
         ? snapshots.map((snapshot) => {
             const report = snapshot.payload || {};
             const current = report.current || {};
+            const rollback = report.rollbackSummary || {};
+            const rollbackStatus = rollback.status || {};
             const workforceProvenance = current.workforceProvenance || { total: 0, recommended: 0, manual: 0, system: 0 };
             const actions = report.recommendedActions || [];
             return `
@@ -1087,6 +1528,11 @@ function renderCutoverPreflightHistory(payload) {
                         <span>System ${escapeHtml(workforceProvenance.system || 0)}</span>
                     </div>
                     <div class="meta-row">
+                        <span>Rollback gate ${escapeHtml(rollbackStatus.gateSatisfied ? 'satisfied' : 'blocked')}</span>
+                        <span>Runbook ${escapeHtml(rollback.runbookReviewedAt || 'missing')}</span>
+                        <span>Rollback drill ${escapeHtml(rollback.rollbackTestedAt || 'missing')}</span>
+                    </div>
+                    <div class="meta-row">
                         <span>${escapeHtml(snapshot.updatedAt ? formatDate(snapshot.updatedAt) : "n/a")}</span>
                         <span>${escapeHtml(actions.length ? actions[0] : "No recommended actions")}</span>
                     </div>
@@ -1104,6 +1550,7 @@ function renderCutoverPreflightChanges(payload) {
 
     const currentWorkforceProvenance = changes.currentWorkforceProvenance || { total: 0, recommended: 0, manual: 0, system: 0 };
     const workforceProvenanceDelta = changes.workforceProvenanceDelta || { total: 0, recommended: 0, manual: 0, system: 0 };
+    const rollbackComparison = changes.rollbackComparison || {};
 
     document.getElementById("cutover-preflight-change-summary").innerHTML = changes.hasStoredBaseline
         ? [
@@ -1113,6 +1560,9 @@ function renderCutoverPreflightChanges(payload) {
             ["Blockers Removed", (changes.blockersRemoved || []).length],
             ["Actions Added", (changes.actionsAdded || []).length],
             ["Actions Removed", (changes.actionsRemoved || []).length],
+            ["Rollback Gate", rollbackComparison.gateChanged ? `${rollbackComparison.previousGateSatisfied ? 'satisfied' : 'blocked'} -> ${rollbackComparison.currentGateSatisfied ? 'satisfied' : 'blocked'}` : (rollbackComparison.currentGateSatisfied ? 'satisfied' : 'blocked')],
+            ["Runbook Evidence", rollbackComparison.runbookChanged ? `${rollbackComparison.previousRunbookReviewedAt || 'missing'} -> ${rollbackComparison.currentRunbookReviewedAt || 'missing'}` : (rollbackComparison.currentRunbookReviewedAt || 'missing')],
+            ["Rollback Drill", rollbackComparison.rollbackTestChanged ? `${rollbackComparison.previousRollbackTestedAt || 'missing'} -> ${rollbackComparison.currentRollbackTestedAt || 'missing'}` : (rollbackComparison.currentRollbackTestedAt || 'missing')],
             ["Recommended Delta", `${workforceProvenanceDelta.recommended >= 0 ? '+' : ''}${workforceProvenanceDelta.recommended}`],
             ["Manual Delta", `${workforceProvenanceDelta.manual >= 0 ? '+' : ''}${workforceProvenanceDelta.manual}`],
             ["System Delta", `${workforceProvenanceDelta.system >= 0 ? '+' : ''}${workforceProvenanceDelta.system}`],
@@ -1499,7 +1949,7 @@ function renderProjectDetail(payload) {
 }
 
 async function loadDashboard() {
-    const [dashboardResponse, shadowResponse, cutoverResponse, pilotResponse, pilotHistoryResponse, historyResponse, pilotTrendResponse, trendResponse, preflightResponse, preflightHistoryResponse] = await Promise.all([
+    const [dashboardResponse, shadowResponse, cutoverResponse, pilotResponse, pilotHistoryResponse, historyResponse, pilotTrendResponse, trendResponse, preflightResponse, preflightHistoryResponse, phase9ExitResponse, phase10PrepResponse, phase9ExitHistoryResponse] = await Promise.all([
         fetch('/api/dashboard/director'),
         fetch('/api/reports/shadow/summary'),
         fetch('/api/reports/cutover/readiness'),
@@ -1510,6 +1960,9 @@ async function loadDashboard() {
         fetch('/api/reports/cutover/trend?limit=6'),
         fetch('/api/reports/cutover/preflight?trendLimit=6'),
         fetch('/api/reports/history?reportName=cutover_preflight&limit=6'),
+        fetch('/api/reports/cutover/phase9-exit'),
+        fetch('/api/reports/cutover/phase10-prep'),
+        fetch('/api/reports/history?reportName=cutover_phase9_exit&limit=6'),
     ]);
     const payload = await dashboardResponse.json();
     const shadowPayload = await shadowResponse.json();
@@ -1521,6 +1974,9 @@ async function loadDashboard() {
     const trendPayload = await trendResponse.json();
     const preflightPayload = await preflightResponse.json();
     const preflightHistoryPayload = await preflightHistoryResponse.json();
+    const phase9ExitPayload = await phase9ExitResponse.json();
+    const phase10PrepPayload = await phase10PrepResponse.json();
+    const phase9ExitHistoryPayload = await phase9ExitHistoryResponse.json();
     state.dashboard = payload;
     renderDashboardStats(payload);
     renderShadowSummary(shadowPayload);
@@ -1530,6 +1986,9 @@ async function loadDashboard() {
     renderCutoverHistory(historyPayload);
     renderCutoverPilotTrend(pilotTrendPayload);
     renderCutoverTrend(trendPayload);
+    renderCutoverPhase9Exit(phase9ExitPayload);
+    renderCutoverPhase10Prep(phase10PrepPayload);
+    renderCutoverPhase9ExitHistory(phase9ExitHistoryPayload);
     renderCutoverPreflight(preflightPayload);
     renderCutoverPreflightHistory(preflightHistoryPayload);
     renderCutoverPreflightChanges(preflightPayload);
@@ -1659,6 +2118,23 @@ async function submitRoleOwner() {
     }
 }
 
+async function submitRollbackEvidence() {
+    const statusNode = document.getElementById('cutover-rollback-action-status');
+    statusNode.textContent = 'Saving...';
+    try {
+        await postJson('/api/reports/cutover/rollback-evidence/update', {
+            evidenceType: document.getElementById('cutover-rollback-evidence-type').value,
+            evidenceDate: document.getElementById('cutover-rollback-evidence-date').value,
+            changedBy: document.getElementById('cutover-rollback-recorded-by').value,
+            notes: document.getElementById('cutover-rollback-notes').value,
+        });
+        statusNode.textContent = 'Saved';
+        await loadDashboard();
+    } catch (error) {
+        statusNode.textContent = error.message;
+    }
+}
+
 async function persistEvidence() {
     const statusNode = document.getElementById('persist-evidence-status');
     statusNode.textContent = 'Persisting...';
@@ -1742,6 +2218,7 @@ document.getElementById('sync-missing-role-owners').addEventListener('click', sy
 document.getElementById('sync-missing-script-signoffs').addEventListener('click', syncMissingScriptSignoffs);
 document.getElementById('submit-script-signoff').addEventListener('click', submitScriptSignoff);
 document.getElementById('submit-role-owner').addEventListener('click', submitRoleOwner);
+document.getElementById('submit-rollback-evidence').addEventListener('click', submitRollbackEvidence);
 loadDashboard();
 </script>
 {% endblock %}

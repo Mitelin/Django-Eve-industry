@@ -1,0 +1,350 @@
+{% extends "workforce/base.html" %}
+
+{% block title %}JOBS{% endblock %}
+{% block nav_jobs_board %}is-active{% endblock %}
+
+{% block extra_head %}
+<style>
+    .jobs-shell { display: grid; gap: 18px; }
+    .jobs-strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(280px, 320px); gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+    .job-row { width: 100%; min-height: 210px; text-align: left; border-radius: 16px; padding: 16px; display: grid; gap: 10px; align-content: start; }
+    .job-row.is-selected { border-color: var(--cool); background: rgba(101, 211, 199, 0.08); box-shadow: 0 0 0 1px rgba(101, 211, 199, 0.2) inset; }
+    .jobs-detail-panel { display: grid; gap: 18px; }
+    .job-target-preview { display: grid; gap: 8px; margin-top: 12px; }
+    .job-target-preview-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.04); color: var(--text); }
+    .job-target-preview-item strong { color: var(--text); font-size: 13px; }
+    .job-target-preview-item span { color: var(--muted); font-size: 12px; }
+    .job-target-preview-more { color: var(--muted); font-size: 12px; }
+    .job-summary-blocks { display: grid; gap: 18px; }
+    .jobs-table-wrap { overflow-x: auto; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); }
+    .jobs-table { width: 100%; border-collapse: collapse; min-width: 1080px; }
+    .jobs-table th, .jobs-table td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); vertical-align: top; text-align: left; }
+    .jobs-table th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .jobs-table tbody tr:last-child td { border-bottom: 0; }
+    .cell-stack { display: grid; gap: 6px; }
+    .material-list { display: grid; gap: 4px; }
+    .material-line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+    .material-line span:last-child { color: var(--muted); }
+    .job-info-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .info-tile { padding: 14px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); }
+    .info-tile strong { display: block; font-size: 22px; color: var(--text); }
+    .info-tile span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .detail-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .detail-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .detail-note { padding: 14px 16px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: var(--muted); }
+    .muted-strong { color: var(--text); }
+    .pill.age-old { color: #ffdbe2; border-color: rgba(255, 127, 150, 0.45); }
+    .pill.age-mid { color: #fff0c7; border-color: rgba(255, 207, 102, 0.45); }
+    .pill.age-fresh { color: #dcfff5; border-color: rgba(101, 211, 199, 0.45); }
+    .pill.rush { color: #fff0c7; border-color: rgba(255, 207, 102, 0.45); }
+    .stack-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    @media (max-width: 1100px) {
+        .job-info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+        .jobs-strip { grid-auto-columns: minmax(240px, 88vw); }
+        .job-info-grid { grid-template-columns: 1fr; }
+        .detail-header { display: grid; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="eyebrow">Director Build Desk</div>
+    <h2>JOBS</h2>
+    <p>Browse existing jobs, choose one from the top strip, and inspect its computed production table below.</p>
+    <div class="stack-actions" style="margin-top: 20px;">
+        <a class="button-link" href="/director/jobs/">Go to job creation</a>
+        <a class="button-link" href="/director/">Back to operations overview</a>
+    </div>
+</section>
+
+<main class="jobs-shell">
+    <section class="panel">
+        <div class="title-row">
+            <div>
+                <div class="eyebrow">Queue</div>
+                <h3>JOBS</h3>
+            </div>
+            <span class="muted" id="job-count">Loading</span>
+        </div>
+        <div class="jobs-strip" id="job-list">
+            <div class="empty">Loading jobs...</div>
+        </div>
+    </section>
+
+    <section class="panel jobs-detail-panel">
+        <div class="detail-header">
+            <div>
+                <div class="eyebrow">Selected Job</div>
+                <h3 id="detail-title">Open a job</h3>
+            </div>
+            <div class="detail-actions">
+                <span class="pill" id="detail-status-pill">waiting</span>
+                <a class="button-link" href="/director/jobs/" id="edit-job-link">Open in job creation</a>
+            </div>
+        </div>
+        <div id="selected-job-detail">
+            <div class="empty">Select a job card to see the requested outputs and the computed production table.</div>
+        </div>
+    </section>
+</main>
+
+<script>
+const state = {
+    jobs: [],
+    selectedProjectId: null,
+};
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+async function getJson(url) {
+    const response = await fetch(url);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+}
+
+function ageMeta(isoValue) {
+    if (!isoValue) return { label: 'new', css: 'age-fresh' };
+    const deltaMs = Date.now() - new Date(isoValue).getTime();
+    const days = Math.max(0, Math.floor(deltaMs / 86400000));
+    if (days >= 7) return { label: `${days}d old`, css: 'age-old' };
+    if (days >= 2) return { label: `${days}d old`, css: 'age-mid' };
+    return { label: days === 1 ? '1d old' : 'today', css: 'age-fresh' };
+}
+
+function formatDuration(seconds) {
+    const value = Number(seconds || 0);
+    if (!value) return '-';
+    const hours = Math.floor(value / 3600);
+    const minutes = Math.round((value % 3600) / 60);
+    if (hours && minutes) return `${hours}h ${minutes}m`;
+    if (hours) return `${hours}h`;
+    return `${minutes}m`;
+}
+
+function activityLabel(activityId) {
+    const labels = {
+        1: 'Manufacturing',
+        5: 'Copying',
+        8: 'Invention',
+        11: 'Reaction',
+    };
+    return labels[activityId] || `Activity ${activityId}`;
+}
+
+function sortJobsOldestFirst(projects) {
+    return [...projects].sort((left, right) => {
+        const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+        const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+        if (leftTime !== rightTime) return leftTime - rightTime;
+        return Number(left.id) - Number(right.id);
+    });
+}
+
+function renderJobTargetPreview(targets) {
+    if (!targets.length) {
+        return '<div class="job-target-preview-more">No requested items yet.</div>';
+    }
+    const previewItems = targets.slice(0, 4).map(target => `
+        <div class="job-target-preview-item">
+            <strong>${escapeHtml(target.typeName || `Type ${target.typeId}`)}</strong>
+            <span>x${escapeHtml(target.quantity)}</span>
+        </div>
+    `).join('');
+    const remaining = targets.length - 4;
+    return `
+        <div class="job-target-preview">${previewItems}${remaining > 0 ? `<div class="job-target-preview-more">+ ${remaining} more item(s)</div>` : ''}</div>
+    `;
+}
+
+function renderJobs() {
+    const container = document.getElementById('job-list');
+    document.getElementById('job-count').textContent = `${state.jobs.length} total`;
+    if (!state.jobs.length) {
+        container.innerHTML = '<div class="empty">No production jobs yet.</div>';
+        return;
+    }
+    container.innerHTML = sortJobsOldestFirst(state.jobs).map(project => {
+        const age = ageMeta(project.createdAt);
+        return `<button type="button" class="job-row ${project.id === state.selectedProjectId ? 'is-selected' : ''}" data-project-id="${project.id}">
+            <div class="title-row"><strong>${escapeHtml(project.name)}</strong><div class="stack-actions">${project.priority > 3 ? '<span class="pill rush">rush</span>' : ''}<span class="pill ${age.css}">${escapeHtml(age.label)}</span></div></div>
+            <div class="meta-row"><span>${escapeHtml(project.status)}</span><span>${project.targets.length} target(s)</span><span>${project.planSummary.jobCount} plan row(s)</span></div>
+            ${renderJobTargetPreview(project.targets || [])}
+        </button>`;
+    }).join('');
+    container.querySelectorAll('[data-project-id]').forEach(button => button.addEventListener('click', () => selectProject(Number(button.dataset.projectId))));
+}
+
+function showProject(project) {
+    state.selectedProjectId = project?.id || null;
+    renderSelectedJob(project);
+    renderJobs();
+}
+
+function renderSelectedJob(project) {
+    const detailTitle = document.getElementById('detail-title');
+    const detailStatusPill = document.getElementById('detail-status-pill');
+    const editJobLink = document.getElementById('edit-job-link');
+    const container = document.getElementById('selected-job-detail');
+
+    if (!project) {
+        detailTitle.textContent = 'Open a job';
+        detailStatusPill.textContent = 'waiting';
+        editJobLink.href = '/director/jobs/';
+        container.innerHTML = '<div class="empty">Select a job card to see the requested outputs and the computed production table.</div>';
+        return;
+    }
+
+    const summary = project.planSummary || { jobCount: 0, materialCount: 0 };
+    const totalRequested = (project.targets || []).reduce((sum, target) => sum + Number(target.quantity || 0), 0);
+    const totalRuns = (project.jobs || []).reduce((sum, job) => sum + Number(job.runs || 0), 0);
+
+    detailTitle.textContent = project.name || 'Selected job';
+    detailStatusPill.textContent = project.status || 'draft';
+    editJobLink.href = '/director/jobs/';
+
+    const targetRows = (project.targets || []).length
+        ? project.targets.map(target => `
+            <tr>
+                <td>${escapeHtml(target.typeName || `Type ${target.typeId}`)}</td>
+                <td>${escapeHtml(target.quantity)}</td>
+                <td>${target.isFinalOutput ? 'Final output' : 'Support item'}</td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="3" class="muted">No requested outputs recorded.</td></tr>';
+
+    const jobRows = (project.jobs || []).length
+        ? project.jobs.map(job => `
+            <tr>
+                <td>
+                    <div class="cell-stack">
+                        <strong>${escapeHtml(job.productTypeName || `Type ${job.productTypeId}`)}</strong>
+                        <span class="muted">Type ${escapeHtml(job.productTypeId)}</span>
+                    </div>
+                </td>
+                <td>
+                    <div class="cell-stack">
+                        <strong>${escapeHtml(job.blueprintTypeName || `Type ${job.blueprintTypeId}`)}</strong>
+                        <span class="muted">Type ${escapeHtml(job.blueprintTypeId)}</span>
+                    </div>
+                </td>
+                <td>${escapeHtml(activityLabel(job.activityId))}</td>
+                <td>${escapeHtml(job.runs)}</td>
+                <td>${escapeHtml(job.level)}</td>
+                <td>${escapeHtml(formatDuration(job.expectedDurationS))}</td>
+                <td>
+                    <div class="material-list">
+                        ${(job.materials || []).map(material => `
+                            <div class="material-line">
+                                <strong>${escapeHtml(material.materialTypeName || `Type ${material.materialTypeId}`)}</strong>
+                                <span>x${escapeHtml(material.quantityTotal)}</span>
+                            </div>
+                        `).join('') || '<span class="muted">No linked materials</span>'}
+                    </div>
+                </td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="7" class="muted">No planner jobs generated yet.</td></tr>';
+
+    const materialRows = (project.materials || []).length
+        ? project.materials.map(material => `
+            <tr>
+                <td>
+                    <div class="cell-stack">
+                        <strong>${escapeHtml(material.materialTypeName || `Type ${material.materialTypeId}`)}</strong>
+                        <span class="muted">Type ${escapeHtml(material.materialTypeId)}</span>
+                    </div>
+                </td>
+                <td>${escapeHtml(material.quantityTotal)}</td>
+                <td>${material.isIntermediate ? 'Intermediate' : 'Input'}</td>
+                <td>${escapeHtml(activityLabel(material.activityId))}</td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="4" class="muted">No total materials generated yet.</td></tr>';
+
+    container.innerHTML = `
+        <div class="job-summary-blocks">
+            <div class="job-info-grid">
+                <div class="info-tile"><span>Requested outputs</span><strong>${escapeHtml((project.targets || []).length)}</strong></div>
+                <div class="info-tile"><span>Total output qty</span><strong>${escapeHtml(totalRequested)}</strong></div>
+                <div class="info-tile"><span>Manufacturing rows</span><strong>${escapeHtml(summary.jobCount)}</strong></div>
+                <div class="info-tile"><span>Total runs</span><strong>${escapeHtml(totalRuns)}</strong></div>
+            </div>
+
+            ${project.notes ? `<div class="detail-note"><span class="muted-strong">Notes:</span> ${escapeHtml(project.notes)}</div>` : ''}
+
+            <div>
+                <div class="title-row"><h4>Requested outputs</h4><span class="muted">What this job should produce</span></div>
+                <div class="jobs-table-wrap">
+                    <table class="jobs-table">
+                        <thead><tr><th>Item</th><th>Quantity</th><th>Role</th></tr></thead>
+                        <tbody>${targetRows}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div>
+                <div class="title-row"><h4>Production table</h4><span class="muted">Computed steps similar to the legacy planner view</span></div>
+                <div class="jobs-table-wrap">
+                    <table class="jobs-table">
+                        <thead><tr><th>Product</th><th>Blueprint</th><th>Activity</th><th>Runs</th><th>Level</th><th>Time</th><th>Materials per step</th></tr></thead>
+                        <tbody>${jobRows}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div>
+                <div class="title-row"><h4>Total material demand</h4><span class="muted">Aggregated inputs for this job</span></div>
+                <div class="jobs-table-wrap">
+                    <table class="jobs-table">
+                        <thead><tr><th>Material</th><th>Quantity</th><th>Kind</th><th>Activity</th></tr></thead>
+                        <tbody>${materialRows}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+async function loadJobs(preferredProjectId = null) {
+    const payload = await getJson('/api/planner/projects');
+    state.jobs = payload.projects || [];
+    renderJobs();
+
+    if (preferredProjectId) {
+        await selectProject(preferredProjectId);
+        return;
+    }
+
+    const orderedJobs = sortJobsOldestFirst(state.jobs);
+    if (state.selectedProjectId && orderedJobs.some(project => project.id === state.selectedProjectId)) {
+        await selectProject(state.selectedProjectId);
+        return;
+    }
+    if (orderedJobs.length) {
+        await selectProject(orderedJobs[0].id);
+        return;
+    }
+    showProject(null);
+}
+
+async function selectProject(projectId) {
+    const payload = await getJson(`/api/planner/projects/${projectId}`);
+    showProject(payload);
+}
+
+loadJobs().catch(error => {
+    document.getElementById('selected-job-detail').innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+});
+</script>
+{% endblock %}

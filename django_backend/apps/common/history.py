@@ -62,7 +62,7 @@ def persist_all_report_snapshots(*, snapshot_date: date | None = None) -> list[R
     pilot_snapshot = persist_report_snapshot(
         report_name="cutover_pilot_readiness",
         payload=pilot,
-        incident_count=int(len(pilot.get("expansionBlockers") or [])),
+        incident_count=int((pilot.get("operationalSummary") or {}).get("incidentCount") or len(pilot.get("expansionBlockers") or [])),
         go_no_go=bool(pilot.get("pilotExpansionGoNoGo")),
         snapshot_date=snapshot_date,
     )
@@ -79,6 +79,18 @@ def persist_all_report_snapshots(*, snapshot_date: date | None = None) -> list[R
         snapshot_date=snapshot_date,
     )
     stored.append(preflight_snapshot)
+
+    from apps.common.phase9_exit import generate_phase9_exit_report
+
+    phase9_exit = generate_phase9_exit_report()
+    phase9_exit_snapshot = persist_report_snapshot(
+        report_name="cutover_phase9_exit",
+        payload=phase9_exit,
+        incident_count=int((phase9_exit.get("summary") or {}).get("blockingFailureCount") or 0),
+        go_no_go=bool((phase9_exit.get("decisions") or {}).get("primaryModeReady")),
+        snapshot_date=snapshot_date,
+    )
+    stored.append(phase9_exit_snapshot)
     return stored
 
 
@@ -108,6 +120,8 @@ def list_cutover_readiness_trend(*, limit: int = 14) -> list[dict[str, Any]]:
         payload = snapshot.payload or {}
         role_assignments = payload.get("roleAssignments") or {}
         script_signoffs = payload.get("scriptSignoffs") or {}
+        rollback = payload.get("rollbackSummary") or {}
+        rollback_status = rollback.get("status") or {}
         trend.append(
             {
                 "snapshotDate": snapshot.snapshot_date.isoformat(),
@@ -118,6 +132,9 @@ def list_cutover_readiness_trend(*, limit: int = 14) -> list[dict[str, Any]]:
                 "validatedSignoffs": int(script_signoffs.get("validatedCount") or 0),
                 "requiredSignoffs": int(script_signoffs.get("requiredCount") or 0),
                 "blockerCount": len(payload.get("blockers") or []),
+                "rollbackGateSatisfied": bool(rollback_status.get("gateSatisfied")),
+                "runbookReviewedAt": rollback.get("runbookReviewedAt") or "",
+                "rollbackTestedAt": rollback.get("rollbackTestedAt") or "",
                 "mode": payload.get("mode") or "",
             }
         )
@@ -130,6 +147,11 @@ def list_cutover_pilot_readiness_trend(*, limit: int = 14) -> list[dict[str, Any
     for snapshot in snapshots:
         payload = snapshot.payload or {}
         activity = payload.get("activitySummary") or {}
+        operational = payload.get("operationalSummary") or {}
+        policy = payload.get("policySummary") or {}
+        policy_status = policy.get("status") or {}
+        rollback = payload.get("rollbackSummary") or {}
+        rollback_status = rollback.get("status") or {}
         trend.append(
             {
                 "snapshotDate": snapshot.snapshot_date.isoformat(),
@@ -141,6 +163,19 @@ def list_cutover_pilot_readiness_trend(*, limit: int = 14) -> list[dict[str, Any
                 "tempDoneCount": int(activity.get("tempDoneCount") or 0),
                 "verifiedOkCount": int(activity.get("verifiedOkCount") or 0),
                 "verifyMissCount": int(activity.get("verifyMissCount") or 0),
+                "verifyMissRatePercent": float(operational.get("verifyMissRatePercent") or 0.0),
+                "escalatedCount": int(operational.get("escalatedCount") or 0),
+                "directorInterventionCount": int(operational.get("directorInterventionCount") or 0),
+                "manualInterventionCount": int(operational.get("manualInterventionCount") or 0),
+                "tempDonePastSlaCount": int(operational.get("tempDonePastSlaCount") or 0),
+                "failedOpenCount": int(operational.get("failedOpenCount") or 0),
+                "policyBlocked": not bool(policy_status.get("withinPolicy", True)),
+                "rollbackGateSatisfied": bool(rollback_status.get("gateSatisfied")),
+                "rollbackEvidenceCurrent": bool(rollback_status.get("evidenceCurrent")),
+                "runbookReviewedAt": rollback.get("runbookReviewedAt") or "",
+                "runbookAgeDays": rollback.get("runbookAgeDays"),
+                "rollbackTestedAt": rollback.get("rollbackTestedAt") or "",
+                "rollbackTestAgeDays": rollback.get("rollbackTestAgeDays"),
                 "expansionBlockerCount": len(payload.get("expansionBlockers") or []),
             }
         )
