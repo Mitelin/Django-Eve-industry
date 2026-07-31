@@ -5,30 +5,54 @@
 
 {% block extra_head %}
 <style>
-    .jobs-shell { display: grid; gap: 18px; }
+    .jobs-shell { display: grid; gap: 18px; min-width: 0; }
     .jobs-strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(280px, 320px); gap: 14px; overflow-x: auto; padding-bottom: 8px; }
     .job-row { width: 100%; min-height: 210px; text-align: left; border-radius: 16px; padding: 16px; display: grid; gap: 10px; align-content: start; }
     .job-row.is-selected { border-color: var(--cool); background: rgba(101, 211, 199, 0.08); box-shadow: 0 0 0 1px rgba(101, 211, 199, 0.2) inset; }
-    .jobs-detail-panel { display: grid; gap: 18px; }
+    .jobs-detail-panel { display: grid; gap: 14px; min-width: 0; }
+    .production-panel, .materials-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; width: min(2400px, calc(100vw - 24px)); min-width: 0; margin-left: calc((100% - min(2400px, calc(100vw - 24px))) / 2); }
+    #selected-job-production, #selected-job-materials { min-width: 0; max-width: 100%; }
     .job-target-preview { display: grid; gap: 8px; margin-top: 12px; }
     .job-target-preview-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.04); color: var(--text); }
     .job-target-preview-item strong { color: var(--text); font-size: 13px; }
     .job-target-preview-item span { color: var(--muted); font-size: 12px; }
     .job-target-preview-more { color: var(--muted); font-size: 12px; }
-    .job-summary-blocks { display: grid; gap: 18px; }
-    .jobs-table-wrap { overflow-x: auto; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); }
-    .jobs-table { width: 100%; border-collapse: collapse; min-width: 1080px; }
-    .jobs-table th, .jobs-table td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); vertical-align: top; text-align: left; }
-    .jobs-table th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .job-summary-blocks { display: grid; gap: 14px; min-width: 0; }
+    .job-summary-blocks > div { min-width: 0; }
+    .jobs-table-wrap { width: 100%; max-width: 100%; overflow: auto; max-height: 72vh; border-radius: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.02); }
+    .jobs-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 1080px; font-size: 11px; line-height: 1.2; }
+    .jobs-table.legacy-production { min-width: 1960px; }
+    .jobs-table th, .jobs-table td { padding: 5px 7px; border-right: 1px solid rgba(255,255,255,0.07); border-bottom: 1px solid rgba(255,255,255,0.07); vertical-align: middle; text-align: left; }
+    .jobs-table th { position: sticky; top: 0; z-index: 3; color: var(--muted); background: var(--panel); font-size: 10px; text-transform: uppercase; letter-spacing: 0; white-space: nowrap; }
     .jobs-table tbody tr:last-child td { border-bottom: 0; }
-    .cell-stack { display: grid; gap: 6px; }
-    .material-list { display: grid; gap: 4px; }
+    .jobs-table tbody tr:hover td { background: rgba(101, 211, 199, 0.05); }
+    .cell-stack { display: grid; gap: 2px; }
+    .material-list { display: grid; gap: 2px; }
     .material-line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
     .material-line span:last-child { color: var(--muted); }
+    .jobs-table td.number { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .jobs-table .product-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .jobs-table .product-cell span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .jobs-table .materials-cell { min-width: 180px; max-width: 260px; }
+    .jobs-table .material-line { padding: 2px 0; }
+    .jobs-table .material-line + .material-line { border-top: 1px solid rgba(255,255,255,0.06); }
+    .jobs-table .material-line span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .legacy-production .sticky-product { position: sticky; left: 0; z-index: 2; width: 170px; min-width: 170px; max-width: 170px; background: #0d1829; }
+    .legacy-production .sticky-blueprint { position: sticky; left: 170px; z-index: 2; width: 205px; min-width: 205px; max-width: 205px; background: #0d1829; }
+    .jobs-table th.sticky-product, .jobs-table th.sticky-blueprint { z-index: 5; }
+    .legacy-production tbody tr:hover td.sticky-product,
+    .legacy-production tbody tr:hover td.sticky-blueprint { background: #14253a; }
+    .materials-details summary { cursor: pointer; color: var(--cool); white-space: nowrap; }
+    .materials-details[open] summary { margin-bottom: 4px; }
+    .materials-popover { display: grid; gap: 2px; min-width: 220px; }
+    .status-cell { font-weight: 700; color: #fff0c7; white-space: nowrap; }
+    .unavailable-cell { color: var(--muted); text-align: center; }
     .job-info-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
     .info-tile { padding: 14px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); }
     .info-tile strong { display: block; font-size: 22px; color: var(--text); }
     .info-tile span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .activity-pill { display: inline-flex; padding: 2px 5px; border: 1px solid var(--line); color: var(--text); white-space: nowrap; }
+    .activity-pill.advanced { border-color: rgba(255, 207, 102, 0.45); color: #fff0c7; }
     .detail-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
     .detail-actions { display: flex; flex-wrap: wrap; gap: 10px; }
     .detail-note { padding: 14px 16px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: var(--muted); }
@@ -45,6 +69,7 @@
         .jobs-strip { grid-auto-columns: minmax(240px, 88vw); }
         .job-info-grid { grid-template-columns: 1fr; }
         .detail-header { display: grid; }
+        .production-panel, .materials-panel { width: calc(100vw - 12px); margin-left: calc((100% - (100vw - 12px)) / 2); }
     }
 </style>
 {% endblock %}
@@ -86,7 +111,33 @@
             </div>
         </div>
         <div id="selected-job-detail">
-            <div class="empty">Select a job card to see the requested outputs and the computed production table.</div>
+            <div class="empty">Select a job card to see its requested outputs and summary.</div>
+        </div>
+    </section>
+
+    <section class="panel production-panel">
+        <div class="title-row">
+            <div>
+                <div class="eyebrow">Manufacturing Plan</div>
+                <h3>Production table</h3>
+            </div>
+            <span class="muted" id="production-row-count">No job selected</span>
+        </div>
+        <div id="selected-job-production">
+            <div class="empty">Select a job card to see its computed production rows.</div>
+        </div>
+    </section>
+
+    <section class="panel materials-panel">
+        <div class="title-row">
+            <div>
+                <div class="eyebrow">Material Plan</div>
+                <h3>Total material demand</h3>
+            </div>
+            <span class="muted" id="material-row-count">No job selected</span>
+        </div>
+        <div id="selected-job-materials">
+            <div class="empty">Select a job card to see its aggregated material demand.</div>
         </div>
     </section>
 </main>
@@ -106,8 +157,24 @@ function escapeHtml(value) {
         .replaceAll("'", '&#39;');
 }
 
+function getCookie(name) {
+    const item = document.cookie.split(';').map(value => value.trim()).find(value => value.startsWith(`${name}=`));
+    return item ? decodeURIComponent(item.slice(name.length + 1)) : '';
+}
+
 async function getJson(url) {
     const response = await fetch(url);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+}
+
+async function postJson(url, body = {}) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify(body),
+    });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
     return payload;
@@ -123,13 +190,15 @@ function ageMeta(isoValue) {
 }
 
 function formatDuration(seconds) {
-    const value = Number(seconds || 0);
-    if (!value) return '-';
-    const hours = Math.floor(value / 3600);
-    const minutes = Math.round((value % 3600) / 60);
-    if (hours && minutes) return `${hours}h ${minutes}m`;
-    if (hours) return `${hours}h`;
-    return `${minutes}m`;
+    const totalSeconds = Math.max(0, Number(seconds || 0));
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    return [days ? `${days}d` : '', hours ? `${hours}h` : '', minutes ? `${minutes}m` : ''].filter(Boolean).join(' ') || '< 1m';
+}
+
+function formatQuantity(value) {
+    return new Intl.NumberFormat('en-US').format(Number(value || 0));
 }
 
 function activityLabel(activityId) {
@@ -140,6 +209,10 @@ function activityLabel(activityId) {
         11: 'Reaction',
     };
     return labels[activityId] || `Activity ${activityId}`;
+}
+
+function plannerStatusLabel(status) {
+    return ({ to_produce: 'K výrobě' })[status] || 'Plán';
 }
 
 function sortJobsOldestFirst(projects) {
@@ -185,10 +258,30 @@ function renderJobs() {
     container.querySelectorAll('[data-project-id]').forEach(button => button.addEventListener('click', () => selectProject(Number(button.dataset.projectId))));
 }
 
+function hasRequestedOutputs(project) {
+    return (project?.targets || []).some(target => target.isFinalOutput && Number(target.quantity || 0) > 0);
+}
+
+function hasComputedPlan(project) {
+    return Number(project?.planSummary?.jobCount || 0) > 0 || (project?.jobs || []).length > 0;
+}
+
 function showProject(project) {
     state.selectedProjectId = project?.id || null;
     renderSelectedJob(project);
     renderJobs();
+}
+
+function showProjectLoading(project, message) {
+    state.selectedProjectId = project?.id || null;
+    renderJobs();
+    document.getElementById('detail-title').textContent = project?.name || 'Open a job';
+    document.getElementById('detail-status-pill').textContent = 'rebuilding';
+    document.getElementById('selected-job-detail').innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    document.getElementById('production-row-count').textContent = 'Computing';
+    document.getElementById('selected-job-production').innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    document.getElementById('material-row-count').textContent = 'Computing';
+    document.getElementById('selected-job-materials').innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
 }
 
 function renderSelectedJob(project) {
@@ -196,22 +289,34 @@ function renderSelectedJob(project) {
     const detailStatusPill = document.getElementById('detail-status-pill');
     const editJobLink = document.getElementById('edit-job-link');
     const container = document.getElementById('selected-job-detail');
+    const productionContainer = document.getElementById('selected-job-production');
+    const productionRowCount = document.getElementById('production-row-count');
+    const materialsContainer = document.getElementById('selected-job-materials');
+    const materialRowCount = document.getElementById('material-row-count');
 
     if (!project) {
         detailTitle.textContent = 'Open a job';
         detailStatusPill.textContent = 'waiting';
         editJobLink.href = '/director/jobs/';
-        container.innerHTML = '<div class="empty">Select a job card to see the requested outputs and the computed production table.</div>';
+        container.innerHTML = '<div class="empty">Select a job card to see its requested outputs and summary.</div>';
+        productionRowCount.textContent = 'No job selected';
+        productionContainer.innerHTML = '<div class="empty">Select a job card to see its computed production rows.</div>';
+        materialRowCount.textContent = 'No job selected';
+        materialsContainer.innerHTML = '<div class="empty">Select a job card to see its aggregated material demand.</div>';
         return;
     }
 
     const summary = project.planSummary || { jobCount: 0, materialCount: 0 };
     const totalRequested = (project.targets || []).reduce((sum, target) => sum + Number(target.quantity || 0), 0);
     const totalRuns = (project.jobs || []).reduce((sum, job) => sum + Number(job.runs || 0), 0);
+    const totalDuration = (project.jobs || []).reduce((sum, job) => sum + Number(job.expectedDurationS || 0), 0);
+    const advancedCount = (project.jobs || []).filter(job => job.isAdvanced).length;
 
     detailTitle.textContent = project.name || 'Selected job';
     detailStatusPill.textContent = project.status || 'draft';
     editJobLink.href = '/director/jobs/';
+    productionRowCount.textContent = `${(project.jobs || []).length} row(s)`;
+    materialRowCount.textContent = `${(project.materials || []).length} row(s)`;
 
     const targetRows = (project.targets || []).length
         ? project.targets.map(target => `
@@ -226,35 +331,54 @@ function renderSelectedJob(project) {
     const jobRows = (project.jobs || []).length
         ? project.jobs.map(job => `
             <tr>
-                <td>
+                <td class="product-cell sticky-product" title="${escapeHtml(job.productTypeName || `Type ${job.productTypeId}`)}">
                     <div class="cell-stack">
                         <strong>${escapeHtml(job.productTypeName || `Type ${job.productTypeId}`)}</strong>
-                        <span class="muted">Type ${escapeHtml(job.productTypeId)}</span>
                     </div>
                 </td>
-                <td>
+                <td class="product-cell sticky-blueprint" title="${escapeHtml(job.blueprintTypeName || `Type ${job.blueprintTypeId}`)}">
                     <div class="cell-stack">
                         <strong>${escapeHtml(job.blueprintTypeName || `Type ${job.blueprintTypeId}`)}</strong>
-                        <span class="muted">Type ${escapeHtml(job.blueprintTypeId)}</span>
                     </div>
                 </td>
-                <td>${escapeHtml(activityLabel(job.activityId))}</td>
-                <td>${escapeHtml(job.runs)}</td>
-                <td>${escapeHtml(job.level)}</td>
-                <td>${escapeHtml(formatDuration(job.expectedDurationS))}</td>
-                <td>
-                    <div class="material-list">
-                        ${(job.materials || []).map(material => `
-                            <div class="material-line">
-                                <strong>${escapeHtml(material.materialTypeName || `Type ${material.materialTypeId}`)}</strong>
-                                <span>x${escapeHtml(material.quantityTotal)}</span>
+                <td class="number">${escapeHtml(job.level)}</td>
+                <td><span class="activity-pill ${job.isAdvanced ? 'advanced' : ''}">${escapeHtml(activityLabel(job.activityId))}</span></td>
+                <td class="number">${escapeHtml(formatQuantity(job.runs))}</td>
+                <td class="number">${escapeHtml(formatQuantity(job.totalOutputQuantity))}</td>
+                <td class="materials-cell">
+                    ${(job.materials || []).length ? `
+                        <details class="materials-details">
+                            <summary>${escapeHtml(job.materials.length)} materiálů</summary>
+                            <div class="materials-popover">
+                                ${job.materials.map(material => `
+                                    <div class="material-line">
+                                        <strong>${escapeHtml(material.materialTypeName || `Type ${material.materialTypeId}`)}</strong>
+                                        <span>${escapeHtml(formatQuantity(material.quantityTotal))}</span>
+                                    </div>
+                                `).join('')}
                             </div>
-                        `).join('') || '<span class="muted">No linked materials</span>'}
-                    </div>
+                        </details>
+                    ` : '<span class="muted">None</span>'}
                 </td>
+                <td class="number">${escapeHtml(formatQuantity(job.outputQuantityPerRun))}</td>
+                <td>${job.isAdvanced ? 'Ano' : 'Ne'}</td>
+                <td class="status-cell">${escapeHtml(plannerStatusLabel(job.plannerStatus))}</td>
+                <td class="number">${escapeHtml(formatQuantity(job.inProgressQuantity))}</td>
+                <td class="number">${escapeHtml(formatQuantity(job.remainingQuantity))}</td>
+                <td class="number">${escapeHtml(formatQuantity(job.stockQuantity))}</td>
+                <td class="number"><strong>${escapeHtml(formatQuantity(job.toProduceQuantity))}</strong></td>
+                <td class="unavailable-cell" title="Requires live ESI hangar data">&mdash;</td>
+                <td class="unavailable-cell" title="Requires live ESI hangar data">&mdash;</td>
+                <td class="unavailable-cell" title="Requires live ESI hangar data">&mdash;</td>
+                <td class="unavailable-cell" title="Requires live ESI hangar data">&mdash;</td>
+                <td class="unavailable-cell" title="Requires live ESI hangar data">&mdash;</td>
+                <td class="unavailable-cell" title="Requires live ESI hangar data">&mdash;</td>
+                <td class="number">${Number(job.activityId) === 5 ? escapeHtml(formatQuantity(job.totalOutputQuantity)) : '&mdash;'}</td>
+                <td class="unavailable-cell" title="Requires price and industry index data">&mdash;</td>
+                <td class="number">${escapeHtml(formatDuration(job.expectedDurationS))}</td>
             </tr>
         `).join('')
-        : '<tr><td colspan="7" class="muted">No planner jobs generated yet.</td></tr>';
+        : `<tr><td colspan="23" class="muted">${escapeHtml(project.planRecoveryError || (hasRequestedOutputs(project) ? 'No planner jobs generated yet.' : 'This job has no requested outputs to compute.'))}</td></tr>`;
 
     const materialRows = (project.materials || []).length
         ? project.materials.map(material => `
@@ -265,12 +389,13 @@ function renderSelectedJob(project) {
                         <span class="muted">Type ${escapeHtml(material.materialTypeId)}</span>
                     </div>
                 </td>
-                <td>${escapeHtml(material.quantityTotal)}</td>
-                <td>${material.isIntermediate ? 'Intermediate' : 'Input'}</td>
+                <td class="number">${escapeHtml(formatQuantity(material.level))}</td>
                 <td>${escapeHtml(activityLabel(material.activityId))}</td>
+                <td class="number">${escapeHtml(formatQuantity(material.quantityTotal))}</td>
+                <td>${material.isIntermediate ? 'Intermediate' : 'Input'}</td>
             </tr>
         `).join('')
-        : '<tr><td colspan="4" class="muted">No total materials generated yet.</td></tr>';
+        : '<tr><td colspan="5" class="muted">No total materials generated yet.</td></tr>';
 
     container.innerHTML = `
         <div class="job-summary-blocks">
@@ -278,7 +403,9 @@ function renderSelectedJob(project) {
                 <div class="info-tile"><span>Requested outputs</span><strong>${escapeHtml((project.targets || []).length)}</strong></div>
                 <div class="info-tile"><span>Total output qty</span><strong>${escapeHtml(totalRequested)}</strong></div>
                 <div class="info-tile"><span>Manufacturing rows</span><strong>${escapeHtml(summary.jobCount)}</strong></div>
-                <div class="info-tile"><span>Total runs</span><strong>${escapeHtml(totalRuns)}</strong></div>
+                <div class="info-tile"><span>Total runs</span><strong>${escapeHtml(formatQuantity(totalRuns))}</strong></div>
+                <div class="info-tile"><span>Serial duration</span><strong>${escapeHtml(formatDuration(totalDuration))}</strong></div>
+                <div class="info-tile"><span>Advanced rows</span><strong>${escapeHtml(advancedCount)}</strong></div>
             </div>
 
             ${project.notes ? `<div class="detail-note"><span class="muted-strong">Notes:</span> ${escapeHtml(project.notes)}</div>` : ''}
@@ -293,25 +420,24 @@ function renderSelectedJob(project) {
                 </div>
             </div>
 
-            <div>
-                <div class="title-row"><h4>Production table</h4><span class="muted">Computed steps similar to the legacy planner view</span></div>
-                <div class="jobs-table-wrap">
-                    <table class="jobs-table">
-                        <thead><tr><th>Product</th><th>Blueprint</th><th>Activity</th><th>Runs</th><th>Level</th><th>Time</th><th>Materials per step</th></tr></thead>
-                        <tbody>${jobRows}</tbody>
-                    </table>
-                </div>
-            </div>
+        </div>
+    `;
 
-            <div>
-                <div class="title-row"><h4>Total material demand</h4><span class="muted">Aggregated inputs for this job</span></div>
-                <div class="jobs-table-wrap">
-                    <table class="jobs-table">
-                        <thead><tr><th>Material</th><th>Quantity</th><th>Kind</th><th>Activity</th></tr></thead>
-                        <tbody>${materialRows}</tbody>
-                    </table>
-                </div>
-            </div>
+    productionContainer.innerHTML = `
+        <div class="jobs-table-wrap">
+            <table class="jobs-table legacy-production">
+                <thead><tr><th class="sticky-product">Výrobek</th><th class="sticky-blueprint">Blueprint</th><th>Level</th><th>Akce</th><th>Počet běhů</th><th>Celkové množství</th><th>Materiály</th><th>Velikost dávky</th><th>Advance</th><th>Status</th><th>Ve výrobě</th><th>Zbývající množství</th><th>Sklad</th><th>K výrobě</th><th>Výroba buffer</th><th>Výroba</th><th>Reakce buffer</th><th>Reakce</th><th>Výzkum buffer</th><th>Výzkum</th><th>BPC runy</th><th>Run cost</th><th>Celkový čas</th></tr></thead>
+                <tbody>${jobRows}</tbody>
+            </table>
+        </div>
+    `;
+
+    materialsContainer.innerHTML = `
+        <div class="jobs-table-wrap">
+            <table class="jobs-table">
+                <thead><tr><th>Input material</th><th>Level</th><th>Action</th><th>Required quantity</th><th>Role</th></tr></thead>
+                <tbody>${materialRows}</tbody>
+            </table>
         </div>
     `;
 }
@@ -339,7 +465,16 @@ async function loadJobs(preferredProjectId = null) {
 }
 
 async function selectProject(projectId) {
-    const payload = await getJson(`/api/planner/projects/${projectId}`);
+    let payload = await getJson(`/api/planner/projects/${projectId}`);
+    if (hasRequestedOutputs(payload) && !hasComputedPlan(payload)) {
+        showProjectLoading(payload, 'Computing production table for this job...');
+        try {
+            const rebuilt = await postJson(`/api/planner/projects/${projectId}/rebuild`, {});
+            payload = rebuilt.project || payload;
+        } catch (error) {
+            payload = { ...payload, planRecoveryError: `Production table could not be computed automatically: ${error.message}` };
+        }
+    }
     showProject(payload);
 }
 

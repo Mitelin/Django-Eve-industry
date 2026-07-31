@@ -40,6 +40,8 @@ class PlanJob(TimeStampedModel):
     blueprint_type_id = models.BigIntegerField(db_index=True)
     product_type_id = models.BigIntegerField(db_index=True)
     runs = models.IntegerField(default=0)
+    output_quantity_per_run = models.IntegerField(default=1)
+    duration_per_run_s = models.IntegerField(default=0)
     expected_duration_s = models.IntegerField(default=0)
     level = models.IntegerField(default=0)
     probability = models.FloatField(null=True, blank=True)

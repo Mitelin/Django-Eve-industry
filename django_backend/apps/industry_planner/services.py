@@ -533,7 +533,9 @@ class IndustryPlannerService:
 
         while result["modules"]:
             module = result["modules"].pop(0)
-            blueprint_products = self.repository.get_blueprint_products(int(module["typeId"]))
+            blueprint_products = self.repository.get_blueprint_source(int(module["typeId"]))
+            if not blueprint_products:
+                blueprint_products = self.repository.get_blueprint_products(int(module["typeId"]))
 
             for element in list(blueprint_products):
                 if not (
@@ -548,7 +550,9 @@ class IndustryPlannerService:
                 amount = int(math.ceil(int(module["amount"]) / blueprint_product["quantity"]) * blueprint_product["quantity"])
                 level = int(module["level"])
 
-                blueprint_material = self.repository.get_blueprint_material(int(module["typeId"]))
+                blueprint_material = self.repository.get_blueprint_material(int(blueprint_product["blueprintTypeId"]))
+                if not blueprint_material and int(blueprint_product["blueprintTypeId"]) != int(module["typeId"]):
+                    blueprint_material = self.repository.get_blueprint_material(int(module["typeId"]))
 
                 if blueprint_product["productCategoryId"] == 6:
                     if blueprint_product["metaGroupID"] == 1:
@@ -714,7 +718,9 @@ class IndustryPlannerService:
                     blueprint_type_id=int(job["blueprintTypeId"]),
                     product_type_id=int(job["productTypeID"]),
                     runs=int(job["runs"]),
-                    expected_duration_s=int(job.get("time") or 0),
+                    output_quantity_per_run=int(job.get("quantity") or 1),
+                    duration_per_run_s=int(job.get("time") or 0),
+                    expected_duration_s=int(job.get("time") or 0) * int(job["runs"]),
                     level=int(job.get("level") or 0),
                     probability=job.get("probability"),
                     is_advanced=bool(job.get("isAdvanced", False)),

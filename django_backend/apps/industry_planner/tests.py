@@ -568,6 +568,58 @@ class PlannerServiceTests(SimpleTestCase):
 
         self.assertEqual(current, legacy)
 
+    def test_service_resolves_product_type_to_blueprint_source(self) -> None:
+        repository = _FakePlannerRepository()
+        repository.blueprint_sources = {
+            200: [
+                {
+                    "activityId": 1,
+                    "blueprintTypeId": 100,
+                    "blueprint": "Resolved Blueprint",
+                    "time": 120,
+                    "quantity": 1,
+                    "productTypeID": 200,
+                    "product": "Resolved Product",
+                    "productGroupId": 10,
+                    "productCategoryId": 7,
+                    "maxProductionLimit": 300,
+                    "probability": None,
+                    "metaGroupID": 1,
+                }
+            ]
+        }
+        repository.blueprint_materials = {
+            100: [
+                {
+                    "activityId": 1,
+                    "materialTypeID": 500,
+                    "material": "Tritanium",
+                    "materialGroupId": 18,
+                    "materialCategoryId": 4,
+                    "quantity": 10,
+                    "blueprintTypeId": None,
+                    "blueprint": None,
+                    "blueprintQuantity": None,
+                }
+            ]
+        }
+        service = IndustryPlannerService(repository=repository)
+
+        result = service.get_blueprints_details(
+            types=[{"typeId": 200, "amount": 2}],
+            efficiency={"moduleT1ME": 0, "moduleT1TE": 0},
+            build_t1=True,
+            copy_bpo=False,
+            produce_fuel_blocks=False,
+            merge_modules=True,
+        )
+
+        self.assertEqual(len(result["jobs"]), 1)
+        self.assertEqual(result["jobs"][0]["blueprintTypeId"], 100)
+        self.assertEqual(result["jobs"][0]["runs"], 2)
+        self.assertEqual(result["jobs"][0]["materials"][0]["type"], "Tritanium")
+        self.assertEqual(result["materials"][0]["materialTypeID"], 500)
+
     def test_service_matches_legacy_python_for_ore_details(self) -> None:
         repository = build_recursive_repository()
         service = IndustryPlannerService(repository=repository)
@@ -1022,6 +1074,21 @@ class PlannerProjectRouteTests(TestCase):
         self.assertEqual(response.status_code, 201)
         rebuild_mock.assert_called_once()
 
+    def test_get_project_rebuilds_missing_plan_when_targets_exist(self) -> None:
+        project = Project.objects.create(name="Recover Missing Plan", created_by=self.user)
+        ProjectTarget.objects.create(project=project, type_id=100, quantity=3, is_final_output=True)
+
+        service = IndustryPlannerService(repository=build_recursive_repository())
+        with patch("apps.industry_planner.views.planner_service", service):
+            response = self.client.get(f"/api/planner/projects/{project.id}")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["planSummary"], {"jobCount": 2, "materialCount": 6})
+        self.assertEqual(len(payload["jobs"]), 2)
+        self.assertEqual(PlanJob.objects.filter(project=project).count(), 2)
+        self.assertEqual(PlanMaterial.objects.filter(project=project).count(), 6)
+
     def test_rebuild_project_uses_targets_when_types_missing(self) -> None:
         project = Project.objects.create(name="Project API", created_by=self.user)
         ProjectTarget.objects.create(project=project, type_id=100, quantity=3, is_final_output=True)
@@ -1113,6 +1180,8 @@ class PlannerProjectRouteTests(TestCase):
             blueprint_type_id=100,
             product_type_id=200,
             runs=2,
+            output_quantity_per_run=10,
+            duration_per_run_s=60,
             expected_duration_s=120,
             level=1,
             is_advanced=False,
@@ -1152,6 +1221,11 @@ class PlannerProjectRouteTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["jobs"][0]["blueprintTypeName"], "Drake Blueprint")
         self.assertEqual(payload["jobs"][0]["productTypeName"], "Drake")
+        self.assertEqual(payload["jobs"][0]["outputQuantityPerRun"], 10)
+        self.assertEqual(payload["jobs"][0]["totalOutputQuantity"], 20)
+        self.assertEqual(payload["jobs"][0]["remainingQuantity"], 20)
+        self.assertEqual(payload["jobs"][0]["toProduceQuantity"], 20)
+        self.assertEqual(payload["jobs"][0]["plannerStatus"], "to_produce")
         self.assertEqual(payload["jobs"][0]["materials"][0]["materialTypeName"], "Tritanium")
         self.assertEqual(payload["materials"][0]["materialTypeName"], "Pyerite")
 

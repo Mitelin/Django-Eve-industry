@@ -111,14 +111,26 @@ def _build_project_types(project: Project) -> list[dict[str, Any]]:
     ]
 
 
+def _project_rebuild_defaults() -> dict[str, Any]:
+    return {
+        "moduleT1ME": 0,
+        "moduleT1TE": 0,
+        "buildT1": True,
+        "copyBPO": False,
+        "produceFuelBlocks": False,
+        "mergeModules": True,
+    }
+
+
 def _rebuild_project_from_body(project: Project, body: dict[str, Any]) -> dict[str, Any]:
-    types = body.get("types")
+    effective_body = {**_project_rebuild_defaults(), **body}
+    types = effective_body.get("types")
     if types is None:
         types = _build_project_types(project)
 
-    efficiency = _build_efficiency(body)
-    build_t1, copy_bpo, produce_fuel_blocks, merge_modules = _build_flags(body)
-    manufacturing_role_bonus, manufacturing_rig_bonus, reaction_rig_bonus = _build_bonus_tuple(body)
+    efficiency = _build_efficiency(effective_body)
+    build_t1, copy_bpo, produce_fuel_blocks, merge_modules = _build_flags(effective_body)
+    manufacturing_role_bonus, manufacturing_rig_bonus, reaction_rig_bonus = _build_bonus_tuple(effective_body)
 
     return planner_service.rebuild_project_plan(
         project=project,
@@ -132,6 +144,21 @@ def _rebuild_project_from_body(project: Project, body: dict[str, Any]) -> dict[s
         manufacturing_rig_bonus=manufacturing_rig_bonus,
         reaction_rig_bonus=reaction_rig_bonus,
     )
+
+
+def _project_needs_plan(project: Project) -> bool:
+    return project.targets.filter(is_final_output=True).exists() and not project.plan_jobs.exists()
+
+
+def _ensure_project_plan(project: Project, body: dict[str, Any] | None = None) -> bool:
+    if not _project_needs_plan(project):
+        return False
+    try:
+        _rebuild_project_from_body(project, body or {})
+        project.refresh_from_db()
+        return True
+    except Exception:
+        return False
 
 
 def _serialize_project(project: Project, *, include_plan_rows: bool = True) -> dict[str, Any]:
@@ -173,6 +200,14 @@ def _serialize_project(project: Project, *, include_plan_rows: bool = True) -> d
             "productTypeId": plan_job.product_type_id,
             "productTypeName": type_name_map.get(int(plan_job.product_type_id), ""),
             "runs": plan_job.runs,
+            "outputQuantityPerRun": plan_job.output_quantity_per_run,
+            "totalOutputQuantity": plan_job.runs * plan_job.output_quantity_per_run,
+            "inProgressQuantity": 0,
+            "stockQuantity": 0,
+            "remainingQuantity": plan_job.runs * plan_job.output_quantity_per_run,
+            "toProduceQuantity": plan_job.runs * plan_job.output_quantity_per_run,
+            "plannerStatus": "to_produce",
+            "durationPerRunS": plan_job.duration_per_run_s,
             "expectedDurationS": plan_job.expected_duration_s,
             "level": plan_job.level,
             "probability": plan_job.probability,
@@ -344,11 +379,7 @@ def create_project(request: HttpRequest) -> JsonResponse:
     targets = body.get("targets") or []
     _replace_project_targets(project, targets)
     if targets:
-        try:
-            _rebuild_project_from_body(project, body)
-            project.refresh_from_db()
-        except Exception:
-            pass
+        _ensure_project_plan(project, body)
     return JsonResponse(_serialize_project(project), status=201)
 
 
@@ -358,6 +389,7 @@ def get_project(_request: HttpRequest, project_id: int) -> JsonResponse:
     if isinstance(user, JsonResponse):
         return user
     project = get_object_or_404(Project, pk=project_id)
+    _ensure_project_plan(project)
     return JsonResponse(_serialize_project(project))
 
 
